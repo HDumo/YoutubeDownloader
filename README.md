@@ -20,10 +20,20 @@ which is already part of Windows 10/11.
 | Choose where files go | **Browse...** next to "Save to folder" (remembered next time) |
 | Keep the original title | Leave "Save as" empty |
 | Use your own name | Type it in "Save as" and add **one** link (".mp3" is added for you) |
-| Limit downloads per hour | Set "Max downloads per hour" (0 = no limit). Extra links wait in the queue and start automatically when a slot frees up |
-| Pause / resume | **Pause** button |
-| Cancel or remove | Select rows -> **Remove / cancel selected** |
+| Limit downloads | "Limit: max **N** downloads per **A** *unit* + **B** *smaller unit*", e.g. 3 downloads per 1 Hours + 30 Minutes. The second dropdown only lists units smaller than the first (Hours -> Minutes, Seconds; Seconds -> none). N = 0 means no limit. Extra links wait in the queue and start by themselves when allowed. |
+| Pause / resume | **Pause** button (or the tray icon menu) |
+| Remove or cancel | Select rows -> **Remove / cancel selected** (also the Delete key or right-click). A running download is stopped and removed. Right-click -> Retry for failed ones. |
 | Links still waiting when you close | Saved and restored next time you open the app |
+
+## Background mode
+
+Closing the window with the X does **not** quit: the app keeps downloading from
+the system tray. Click the **^** arrow next to the clock to find its red icon
+(Windows calls these "hidden icons"). Double-click it to open the window;
+right-click for Open / Pause / Exit. Use the **Exit app** button or the tray
+menu's Exit to really quit. Untick "When I close this window, keep working in
+the background" if you would rather the X quit the app. Starting the .bat again
+while it is running just brings the existing window back.
 
 ## Notes
 
