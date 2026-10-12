@@ -9,7 +9,7 @@
   Closing the window keeps the app working in the background (tray icon,
   usually under the "hidden icons" arrow next to the clock).
 #>
-param([switch]$SetupOnly)
+param([switch]$SetupOnly, [switch]$StartInTray)
 
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -66,6 +66,7 @@ if ($SetupOnly) {
         Write-Host 'Setup finished.'
         exit 0
     } catch {
+        try { Set-Content -Path (Join-Path $AppDir 'setup-error.txt') -Value $_.Exception.Message } catch { }
         Write-Host ''
         Write-Host "Setup failed: $($_.Exception.Message)" -ForegroundColor Red
         Write-Host 'Check your internet connection and try again.'
@@ -80,11 +81,93 @@ Add-Type -AssemblyName System.Drawing
 # Everything below runs inside try/catch so a hidden console never hides an error.
 try {
 
-if (-not ((Test-Path $YtDlp) -and (Test-Path $Ffmpeg))) {
+# ------------------------------------------- first-run setup (graphical) ------
+function Show-SetupWindow {
+    $errFile = Join-Path $AppDir 'setup-error.txt'
+    if (Test-Path $errFile) { Remove-Item $errFile -Force -ErrorAction SilentlyContinue }
+
+    $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $argText = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $PSCommandPath + '" -SetupOnly'
+    $script:SetupProc = Start-Process -FilePath $psExe -ArgumentList $argText -WindowStyle Hidden -PassThru
+    $null = $script:SetupProc.Handle      # keeps ExitCode readable
+
+    $f = New-Object System.Windows.Forms.Form
+    $script:SetupForm = $f
+    $f.Text = 'YouTube Downloader - first-time setup'
+    $f.FormBorderStyle = 'FixedDialog'
+    $f.MaximizeBox = $false; $f.MinimizeBox = $false
+    $f.StartPosition = 'CenterScreen'
+    $f.ClientSize = New-Object System.Drawing.Size(500, 176)
+    $f.Font = New-Object System.Drawing.Font('Segoe UI', 9.5)
+    $f.BackColor = [System.Drawing.Color]::White
+    try { $f.Icon = New-Object System.Drawing.Icon((Join-Path $AppDir 'app.ico')) } catch { }
+
+    $t = New-Object System.Windows.Forms.Label
+    $t.Text = 'Getting ready...'
+    $t.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 14)
+    $t.AutoSize = $true
+    $t.Location = New-Object System.Drawing.Point(20, 16)
+    $f.Controls.Add($t)
+
+    $script:SetupDetail = New-Object System.Windows.Forms.Label
+    $script:SetupDetail.AutoSize = $false
+    $script:SetupDetail.Location = New-Object System.Drawing.Point(22, 52)
+    $script:SetupDetail.Size = New-Object System.Drawing.Size(456, 24)
+    $script:SetupDetail.Text = 'Downloading the helper programs...'
+    $f.Controls.Add($script:SetupDetail)
+
+    $bar = New-Object System.Windows.Forms.ProgressBar
+    $bar.Style = 'Marquee'
+    $bar.MarqueeAnimationSpeed = 30
+    $bar.Location = New-Object System.Drawing.Point(22, 88)
+    $bar.Size = New-Object System.Drawing.Size(456, 18)
+    $f.Controls.Add($bar)
+
+    $n = New-Object System.Windows.Forms.Label
+    $n.Text = 'This happens only once and needs an internet connection (about 150 MB).'
+    $n.ForeColor = [System.Drawing.Color]::FromArgb(107, 114, 128)
+    $n.AutoSize = $true
+    $n.Location = New-Object System.Drawing.Point(22, 122)
+    $f.Controls.Add($n)
+
+    $script:SetupZip = Join-Path ([IO.Path]::GetTempPath()) 'ytmp3-ffmpeg.zip'
+    $script:SetupTimer = New-Object System.Windows.Forms.Timer
+    $script:SetupTimer.Interval = 500
+    $script:SetupTimer.Add_Tick({
+        try {
+            if ($script:SetupProc.HasExited) {
+                $script:SetupTimer.Stop()
+                $script:SetupForm.Tag = [int]$script:SetupProc.ExitCode
+                $script:SetupForm.Close()
+                return
+            }
+            if (Test-Path $script:SetupZip) {
+                $mb = [Math]::Round((Get-Item $script:SetupZip).Length / 1MB)
+                $script:SetupDetail.Text = "Downloading ffmpeg (audio/video converter): $mb MB so far..."
+            } elseif (-not (Test-Path $YtDlp)) {
+                $script:SetupDetail.Text = 'Downloading yt-dlp (the YouTube engine)...'
+            } else {
+                $script:SetupDetail.Text = 'Almost done - unpacking...'
+            }
+        } catch { }
+    })
+    $f.Add_FormClosing({
+        if ($script:SetupProc -and -not $script:SetupProc.HasExited) {
+            try { & taskkill.exe /PID $script:SetupProc.Id /T /F 2>&1 | Out-Null } catch { }
+        }
+    })
+    $script:SetupTimer.Start()
+    [void]$f.ShowDialog()
+    $script:SetupTimer.Dispose()
+
+    if (($f.Tag -eq 0) -and (Test-Path $YtDlp) -and (Test-Path $Ffmpeg)) { return $true }
+
+    $why = 'The download did not finish.'
+    if (Test-Path $errFile) { try { $why = (Get-Content $errFile -Raw).Trim() } catch { } }
     [void][System.Windows.Forms.MessageBox]::Show(
-        "The helper programs are missing.`r`nPlease start the tool with 'Start YouTube MP3 Downloader.bat' - it downloads them automatically.",
+        "Setup could not finish:`r`n`r`n$why`r`n`r`nCheck your internet connection and start the app again.",
         'YouTube Downloader')
-    exit 1
+    return $false
 }
 
 # ---------------------------------------------- only one copy at a time ------
@@ -95,6 +178,10 @@ $script:ShowEvent = New-Object System.Threading.EventWaitHandle($false, [System.
 if (-not $createdNew) {
     [void]$script:ShowEvent.Set()
     exit 0
+}
+
+if (-not ((Test-Path $YtDlp) -and (Test-Path $Ffmpeg))) {
+    if (-not (Show-SetupWindow)) { exit 1 }
 }
 
 # -------------------------------------------------------------- settings ----
@@ -188,6 +275,14 @@ function Stop-ProcessTree($proc) {
     try { if (-not $proc.HasExited) { $proc.Kill() } } catch { }
 }
 
+function Get-AppIcon {
+    $ico = Join-Path $AppDir 'app.ico'
+    if (Test-Path $ico) {
+        try { return New-Object System.Drawing.Icon($ico) } catch { }
+    }
+    return New-AppIcon
+}
+
 function New-AppIcon {
     try {
         $bmp = New-Object System.Drawing.Bitmap 32, 32
@@ -230,8 +325,19 @@ function Save-Queue {
     try { ConvertTo-Json -InputObject @($pending) | Set-Content -Path $QueueFile -Encoding UTF8 } catch { }
 }
 
+function Get-StatusColor([string]$status) {
+    switch ($status) {
+        'Done'        { return [System.Drawing.Color]::FromArgb(21, 128, 61) }
+        'Failed'      { return [System.Drawing.Color]::FromArgb(185, 28, 28) }
+        'Downloading' { return [System.Drawing.Color]::FromArgb(29, 78, 216) }
+        'Cancelled'   { return [System.Drawing.Color]::FromArgb(107, 114, 128) }
+        default       { return [System.Drawing.Color]::FromArgb(55, 65, 81) }
+    }
+}
+
 function Update-Row($item) {
     $lvi = $item.Row
+    $lvi.ForeColor = Get-StatusColor $item.Status
     $lvi.SubItems[1].Text = $item.Kind
     $lvi.SubItems[2].Text = $item.Url
     $lvi.SubItems[3].Text = $item.Display
@@ -253,6 +359,7 @@ function Add-QueueItem([string]$url, [string]$name, [string]$folder, [string]$ki
     [void]$lvi.SubItems.Add($item.Display)
     [void]$lvi.SubItems.Add($item.Text)
     $lvi.Tag = $item.Id
+    if ($item.Id % 2 -eq 0) { $lvi.BackColor = [System.Drawing.Color]::FromArgb(249, 250, 251) }
     $item.Row = $lvi
     [void]$script:Items.Add($item)
     [void]$list.Items.Add($lvi)
@@ -521,80 +628,173 @@ function Tick {
 }
 
 # --------------------------------------------------------------- the GUI ----
-$appIcon = New-AppIcon
+$appIcon = Get-AppIcon
+
+# palette
+$cBg       = [System.Drawing.Color]::FromArgb(243, 244, 246)
+$cInk      = [System.Drawing.Color]::FromArgb(17, 24, 39)
+$cMuted    = [System.Drawing.Color]::FromArgb(107, 114, 128)
+$cLine     = [System.Drawing.Color]::FromArgb(209, 213, 219)
+$cAccent   = [System.Drawing.Color]::FromArgb(220, 38, 38)
+$cAccentHi = [System.Drawing.Color]::FromArgb(185, 28, 28)
+$cHeader   = [System.Drawing.Color]::FromArgb(31, 41, 55)
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = 'YouTube Downloader (MP3 / MP4)'
-$form.ClientSize = New-Object System.Drawing.Size(850, 668)
-$form.MinimumSize = New-Object System.Drawing.Size(740, 480)
+$form.Text = 'YouTube Downloader'
+$form.ClientSize = New-Object System.Drawing.Size(850, 744)
+$form.MinimumSize = New-Object System.Drawing.Size(760, 520)
 $form.StartPosition = 'CenterScreen'
 $form.Font = New-Object System.Drawing.Font('Segoe UI', 9.5)
+$form.BackColor = $cBg
+$form.ForeColor = $cInk
 $form.Icon = $appIcon
 
-function New-Label($text, $x, $y) {
-    $l = New-Object System.Windows.Forms.Label
-    $l.Text = $text; $l.Location = New-Object System.Drawing.Point($x, $y); $l.AutoSize = $true
-    $form.Controls.Add($l); return $l
+# Everything except the header lives in $body (so positions start below the header).
+$body = New-Object System.Windows.Forms.Panel
+$body.Dock = 'Fill'
+$body.BackColor = $cBg
+$form.Controls.Add($body)
+
+$header = New-Object System.Windows.Forms.Panel
+$header.Dock = 'Top'
+$header.Height = 60
+$header.BackColor = $cHeader
+$form.Controls.Add($header)
+$body.BringToFront()
+
+try {
+    $hdrIco = New-Object System.Drawing.Icon((Join-Path $AppDir 'app.ico'), 48, 48)
+    $hdrBmp = $hdrIco.ToBitmap()
+} catch {
+    $hdrBmp = $appIcon.ToBitmap()
+}
+$pic = New-Object System.Windows.Forms.PictureBox
+$pic.Image = $hdrBmp
+$pic.SizeMode = 'Zoom'
+$pic.Location = New-Object System.Drawing.Point(16, 10)
+$pic.Size = New-Object System.Drawing.Size(40, 40)
+$header.Controls.Add($pic)
+
+$lblTitle = New-Object System.Windows.Forms.Label
+$lblTitle.Text = 'YouTube Downloader'
+$lblTitle.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 15)
+$lblTitle.ForeColor = [System.Drawing.Color]::White
+$lblTitle.AutoSize = $true
+$lblTitle.Location = New-Object System.Drawing.Point(64, 6)
+$header.Controls.Add($lblTitle)
+
+$lblSub = New-Object System.Windows.Forms.Label
+$lblSub.Text = 'MP3 and MP4   |   queue   |   limits and pauses   |   keeps working in the background'
+$lblSub.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+$lblSub.ForeColor = [System.Drawing.Color]::FromArgb(156, 163, 175)
+$lblSub.AutoSize = $true
+$lblSub.Location = New-Object System.Drawing.Point(66, 35)
+$header.Controls.Add($lblSub)
+
+# --- small builders -------------------------------------------------------------
+$script:UiParent = $body          # controls are added to whatever panel $script:UiParent points at
+
+function New-Card($y, $h) {
+    $c = New-Object System.Windows.Forms.Panel
+    $c.BackColor = [System.Drawing.Color]::White
+    $c.Location = New-Object System.Drawing.Point(14, $y)
+    $c.Size = New-Object System.Drawing.Size(822, $h)
+    $c.Anchor = 'Top,Left,Right'
+    $body.Controls.Add($c); return $c
 }
 
-[void](New-Label 'Paste YouTube link(s) - one per line:' 14 8)
-$txtUrl = New-Object System.Windows.Forms.TextBox
+function Style-Button($b, [string]$kind) {
+    $b.FlatStyle = 'Flat'
+    $b.Cursor = [System.Windows.Forms.Cursors]::Hand
+    $b.FlatAppearance.BorderSize = 1
+    if ($kind -eq 'primary') {
+        $b.BackColor = $cAccent
+        $b.ForeColor = [System.Drawing.Color]::White
+        $b.FlatAppearance.BorderColor = $cAccent
+        $b.FlatAppearance.MouseOverBackColor = $cAccentHi
+        $b.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 10)
+    } else {
+        $b.BackColor = [System.Drawing.Color]::White
+        $b.ForeColor = $cInk
+        $b.FlatAppearance.BorderColor = $cLine
+        $b.FlatAppearance.MouseOverBackColor = $cBg
+    }
+}
+
+function New-Caption($text, $x, $y) {
+    $l = New-Object System.Windows.Forms.Label
+    $l.Text = $text; $l.AutoSize = $true
+    $l.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 9)
+    $l.ForeColor = $cMuted
+    $l.Location = New-Object System.Drawing.Point($x, $y)
+    $script:UiParent.Controls.Add($l); return $l
+}
+
+function New-Box($x, $y, $w, $h) {
+    $t = New-Object System.Windows.Forms.TextBox
+    $t.BorderStyle = 'FixedSingle'
+    $t.Location = New-Object System.Drawing.Point($x, $y)
+    $t.Size = New-Object System.Drawing.Size($w, $h)
+    $script:UiParent.Controls.Add($t); return $t
+}
+
+function New-Btn($text, $x, $y, $w, $h, $kind) {
+    $b = New-Object System.Windows.Forms.Button
+    $b.Text = $text
+    $b.Location = New-Object System.Drawing.Point($x, $y)
+    $b.Size = New-Object System.Drawing.Size($w, $h)
+    Style-Button $b $kind
+    $script:UiParent.Controls.Add($b); return $b
+}
+
+# --- card 1: what to download, where to put it -----------------------------------
+$card1 = New-Card 12 198
+$script:UiParent = $card1
+
+[void](New-Caption 'PASTE YOUTUBE LINK(S) - ONE PER LINE' 12 8)
+$txtUrl = New-Box 12 28 686 52
 $txtUrl.Multiline = $true; $txtUrl.ScrollBars = 'Vertical'
-$txtUrl.Location = New-Object System.Drawing.Point(14, 30)
-$txtUrl.Size = New-Object System.Drawing.Size(700, 50)
 $txtUrl.Anchor = 'Top,Left,Right'
-$form.Controls.Add($txtUrl)
 
-$btnAdd = New-Object System.Windows.Forms.Button
-$btnAdd.Text = 'Add to queue'
-$btnAdd.Location = New-Object System.Drawing.Point(724, 30)
-$btnAdd.Size = New-Object System.Drawing.Size(112, 50)
+$btnAdd = New-Btn 'Add to queue' 706 28 104 52 'primary'
 $btnAdd.Anchor = 'Top,Right'
-$form.Controls.Add($btnAdd)
 
-[void](New-Label 'Save as (optional - leave empty to keep the original video title):' 14 86)
-$txtName = New-Object System.Windows.Forms.TextBox
-$txtName.Location = New-Object System.Drawing.Point(14, 108)
-$txtName.Size = New-Object System.Drawing.Size(822, 26)
+[void](New-Caption 'SAVE AS  (optional - leave empty to keep the original video title)' 12 88)
+$txtName = New-Box 12 108 798 26
 $txtName.Anchor = 'Top,Left,Right'
-$form.Controls.Add($txtName)
 
-[void](New-Label 'Save to folder:' 14 140)
-$txtFolder = New-Object System.Windows.Forms.TextBox
-$txtFolder.Location = New-Object System.Drawing.Point(14, 162)
-$txtFolder.Size = New-Object System.Drawing.Size(606, 26)
+[void](New-Caption 'SAVE TO FOLDER' 12 140)
+$txtFolder = New-Box 12 160 584 26
 $txtFolder.Anchor = 'Top,Left,Right'
 $txtFolder.Text = $script:Settings['Folder']
-$form.Controls.Add($txtFolder)
 
-$btnBrowse = New-Object System.Windows.Forms.Button
-$btnBrowse.Text = 'Browse...'
-$btnBrowse.Location = New-Object System.Drawing.Point(630, 160)
-$btnBrowse.Size = New-Object System.Drawing.Size(100, 28)
+$btnBrowse = New-Btn 'Browse...' 604 158 98 30 'normal'
 $btnBrowse.Anchor = 'Top,Right'
-$form.Controls.Add($btnBrowse)
-
-$btnOpen = New-Object System.Windows.Forms.Button
-$btnOpen.Text = 'Open folder'
-$btnOpen.Location = New-Object System.Drawing.Point(736, 160)
-$btnOpen.Size = New-Object System.Drawing.Size(100, 28)
+$btnOpen = New-Btn 'Open folder' 708 158 102 30 'normal'
 $btnOpen.Anchor = 'Top,Right'
-$form.Controls.Add($btnOpen)
 
-# --- helpers to build the one-line option rows --------------------------------
+# --- card 2: format, limit, pauses --------------------------------------------------
+$card2 = New-Card 222 150
+$script:UiParent = $card2
+
 function New-FlowPanel($y) {
     $p = New-Object System.Windows.Forms.FlowLayoutPanel
-    $p.Location = New-Object System.Drawing.Point(14, $y)
-    $p.Size = New-Object System.Drawing.Size(822, 32)
+    $p.Location = New-Object System.Drawing.Point(12, $y)
+    $p.Size = New-Object System.Drawing.Size(798, 32)
     $p.Anchor = 'Top,Left,Right'
     $p.WrapContents = $false
-    $form.Controls.Add($p); return $p
+    $script:UiParent.Controls.Add($p); return $p
 }
 function New-FlowLabel($panel, $text) {
     $l = New-Object System.Windows.Forms.Label
     $l.Text = $text; $l.AutoSize = $true
     $l.Margin = New-Object System.Windows.Forms.Padding(0, 6, 4, 0)
     $panel.Controls.Add($l); return $l
+}
+function New-FlowNote($panel, $text) {
+    $l = New-FlowLabel $panel $text
+    $l.ForeColor = $cMuted
+    return $l
 }
 function New-FlowNumber($panel, $max, $value) {
     $n = New-Object System.Windows.Forms.NumericUpDown
@@ -606,6 +806,7 @@ function New-FlowNumber($panel, $max, $value) {
 function New-FlowCombo($panel, $width) {
     $c = New-Object System.Windows.Forms.ComboBox
     $c.DropDownStyle = 'DropDownList'; $c.Width = $width
+    $c.FlatStyle = 'Flat'
     $c.Margin = New-Object System.Windows.Forms.Padding(0, 2, 8, 0)
     $panel.Controls.Add($c); return $c
 }
@@ -613,6 +814,7 @@ function New-FlowButton($panel, $text, $width) {
     $b = New-Object System.Windows.Forms.Button
     $b.Text = $text; $b.Width = $width; $b.Height = 26
     $b.Margin = New-Object System.Windows.Forms.Padding(4, 1, 8, 0)
+    Style-Button $b 'normal'
     $panel.Controls.Add($b); return $b
 }
 
@@ -643,7 +845,7 @@ function Init-UnitPair($first, $num, $second, $unit1, $unit2) {
 }
 
 # --- what to download: MP3 and/or MP4 ------------------------------------------
-$pnlFormat = New-FlowPanel 192
+$pnlFormat = New-FlowPanel 6
 $chkMp3 = New-Object System.Windows.Forms.CheckBox
 $chkMp3.Text = 'MP3 (audio)'; $chkMp3.AutoSize = $true
 $chkMp3.Margin = New-Object System.Windows.Forms.Padding(0, 4, 14, 0)
@@ -660,11 +862,11 @@ $cmbQuality = New-FlowCombo $pnlFormat 80
 $cmbQuality.SelectedItem = $script:Settings['Quality']
 if (-not $cmbQuality.SelectedItem) { $cmbQuality.SelectedItem = 'Best' }
 $cmbQuality.Enabled = $chkMp4.Checked
-[void](New-FlowLabel $pnlFormat '(tick both to get the audio AND the video of every link)')
+[void](New-FlowNote $pnlFormat '(tick both to get the audio AND the video of every link)')
 $chkMp4.Add_CheckedChanged({ $cmbQuality.Enabled = $chkMp4.Checked })
 
 # --- download limit:  Max [N] downloads per [A] [unit] + [B] [smaller unit] ----
-$pnlLimit = New-FlowPanel 226
+$pnlLimit = New-FlowPanel 40
 [void](New-FlowLabel $pnlLimit 'Limit: max')
 $numCount = New-FlowNumber $pnlLimit 1000 $script:Settings['LimitCount']
 [void](New-FlowLabel $pnlLimit 'downloads per')
@@ -673,12 +875,12 @@ $cmbU1 = New-FlowCombo $pnlLimit 90
 [void](New-FlowLabel $pnlLimit '+')
 $numB = New-FlowNumber $pnlLimit 9999 $script:Settings['Amount2']
 $cmbU2 = New-FlowCombo $pnlLimit 90
-[void](New-FlowLabel $pnlLimit '(0 downloads = no limit)')
+[void](New-FlowNote $pnlLimit '(0 downloads = no limit)')
 Init-UnitPair $cmbU1 $numB $cmbU2 $script:Settings['Unit1'] $script:Settings['Unit2']
 $cmbU1.Add_SelectedIndexChanged({ Fill-SecondUnit $cmbU1 $numB $cmbU2 })
 
 # --- pause for a while:  resume in [A] [unit] + [B] [smaller unit] ---------------
-$pnlPauseFor = New-FlowPanel 260
+$pnlPauseFor = New-FlowPanel 74
 [void](New-FlowLabel $pnlPauseFor 'Pause now, resume in')
 $numPA = New-FlowNumber $pnlPauseFor 9999 $script:Settings['PauseAmount1']
 $cmbPU1 = New-FlowCombo $pnlPauseFor 90
@@ -690,7 +892,7 @@ Init-UnitPair $cmbPU1 $numPB $cmbPU2 $script:Settings['PauseUnit1'] $script:Sett
 $cmbPU1.Add_SelectedIndexChanged({ Fill-SecondUnit $cmbPU1 $numPB $cmbPU2 })
 
 # --- pause until a date and time ------------------------------------------------
-$pnlPauseUntil = New-FlowPanel 294
+$pnlPauseUntil = New-FlowPanel 108
 [void](New-FlowLabel $pnlPauseUntil 'Or pause until')
 $dtpUntil = New-Object System.Windows.Forms.DateTimePicker
 $dtpUntil.Format = [System.Windows.Forms.DateTimePickerFormat]::Custom
@@ -701,55 +903,59 @@ $now = Get-Date
 $dtpUntil.Value = $now.AddHours(1).AddSeconds(-$now.Second)
 $pnlPauseUntil.Controls.Add($dtpUntil)
 $btnPauseUntil = New-FlowButton $pnlPauseUntil 'Pause until then' 150
-[void](New-FlowLabel $pnlPauseUntil '(a download already running finishes first)')
+[void](New-FlowNote $pnlPauseUntil '(a download already running finishes first)')
 
+# --- the queue ---------------------------------------------------------------------
 $list = New-Object System.Windows.Forms.ListView
-$list.View = 'Details'; $list.FullRowSelect = $true; $list.GridLines = $true
+$list.View = 'Details'; $list.FullRowSelect = $true; $list.GridLines = $false
 $list.MultiSelect = $true; $list.HideSelection = $false
-$list.Location = New-Object System.Drawing.Point(14, 332)
-$list.Size = New-Object System.Drawing.Size(822, 236)
+$list.BorderStyle = 'FixedSingle'
+$list.BackColor = [System.Drawing.Color]::White
+$list.Location = New-Object System.Drawing.Point(14, 382)
+$list.Size = New-Object System.Drawing.Size(822, 196)
 $list.Anchor = 'Top,Bottom,Left,Right'
 [void]$list.Columns.Add('#', 36)
 [void]$list.Columns.Add('Type', 50)
 [void]$list.Columns.Add('Link', 240)
 [void]$list.Columns.Add('Save as', 190)
 [void]$list.Columns.Add('Status', 270)
-$form.Controls.Add($list)
+$body.Controls.Add($list)
 
 $ctx = New-Object System.Windows.Forms.ContextMenuStrip
 $ctxRemove = $ctx.Items.Add('Remove / cancel selected')
 $ctxRetry  = $ctx.Items.Add('Retry selected (failed or cancelled)')
 $list.ContextMenuStrip = $ctx
 
+$script:UiParent = $body
 function New-BottomButton($text, $x, $w) {
-    $b = New-Object System.Windows.Forms.Button
-    $b.Text = $text
-    $b.Location = New-Object System.Drawing.Point($x, 576)
-    $b.Size = New-Object System.Drawing.Size($w, 30)
+    $b = New-Btn $text $x 588 $w 32 'normal'
     $b.Anchor = 'Bottom,Left'
-    $form.Controls.Add($b); return $b
+    return $b
 }
 $btnPause  = New-BottomButton 'Pause' 14 90
 $btnRemove = New-BottomButton 'Remove / cancel selected' 112 190
 $btnClear  = New-BottomButton 'Clear finished' 310 120
-$btnUpdate = New-BottomButton 'Update yt-dlp' 438 120
-$btnExit   = New-BottomButton 'Exit app' 566 100
+$btnUpdate = New-BottomButton 'Update yt-dlp' 438 130
+$btnExit   = New-BottomButton 'Exit app' 576 100
 
 $chkBg = New-Object System.Windows.Forms.CheckBox
 $chkBg.Text = 'When I close this window, keep working in the background (find the icon under the hidden-icons arrow near the clock)'
-$chkBg.Location = New-Object System.Drawing.Point(14, 612)
+$chkBg.ForeColor = $cMuted
+$chkBg.Location = New-Object System.Drawing.Point(14, 626)
 $chkBg.Size = New-Object System.Drawing.Size(822, 24)
 $chkBg.Anchor = 'Bottom,Left,Right'
 $chkBg.Checked = [bool]$script:Settings['Background']
-$form.Controls.Add($chkBg)
+$body.Controls.Add($chkBg)
 
 $lblStatus = New-Object System.Windows.Forms.Label
 $lblStatus.AutoSize = $false
-$lblStatus.Location = New-Object System.Drawing.Point(14, 640)
+$lblStatus.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 9.5)
+$lblStatus.ForeColor = $cInk
+$lblStatus.Location = New-Object System.Drawing.Point(14, 654)
 $lblStatus.Size = New-Object System.Drawing.Size(822, 24)
 $lblStatus.Anchor = 'Bottom,Left,Right'
 $lblStatus.Text = 'Idle - add a link above.'
-$form.Controls.Add($lblStatus)
+$body.Controls.Add($lblStatus)
 
 # ------------------------------------------------------------ tray icon -----
 $script:Tray = New-Object System.Windows.Forms.NotifyIcon
@@ -1030,6 +1236,10 @@ $form.Add_Shown({
     }
     if ($stale) { Update-YtDlp }
     $timer.Start()
+    if ($StartInTray) {
+        $script:TipShown = $true
+        $form.Hide()
+    }
 })
 
 # On small screens, make the window shorter (the list shrinks to fit).

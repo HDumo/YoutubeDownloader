@@ -1,17 +1,30 @@
 # YouTube Downloader - MP3 and MP4 (Windows)
 
 A small window where you paste YouTube links; they download as MP3 (audio) and/or MP4 (video) one after
-another, in the order you added them. Nothing to install - it uses PowerShell,
-which is already part of Windows 10/11.
+another, in the order you added them. It runs on PowerShell, which is already part of Windows 10/11,
+and comes with a normal installer (.exe).
 
-## How to use
+## Install (recommended)
 
-1. Copy this whole folder to your PC (e.g. Desktop).
-2. Double-click **Start YouTube MP3 Downloader.bat**.
-   - First time only: it downloads two free helpers (`yt-dlp` and `ffmpeg`, ~100 MB)
-     into a `tools` folder. Wait for the black window to finish.
-   - If Windows says "Windows protected your PC", click **More info -> Run anyway**.
-3. Paste one or more links (one per line), optionally type a name, press **Add to queue**.
+1. Download **[YouTubeDownloader-Setup.exe](https://github.com/HDumo/YoutubeDownloader/raw/main/dist/YouTubeDownloader-Setup.exe)**.
+2. Run it. The wizard installs for your Windows account only (no administrator rights).
+   On the "Choose Components" page the **Desktop shortcut** and **Start Menu shortcut** are ticked by default;
+   **Start with Windows** (quietly, in the tray) is optional.
+3. Leave "Start YouTube Downloader now" ticked on the last page, or double-click the new desktop icon.
+4. First start only: a small window downloads the two free helpers (`yt-dlp` and `ffmpeg`, ~150 MB). Then the app opens.
+
+If Windows says **"Windows protected your PC"**, click **More info -> Run anyway** (the installer is not code-signed).
+Updating: run a newer setup over the old one - your queue and settings are kept.
+Uninstall: Windows Settings -> Apps -> YouTube Downloader (this also deletes its helpers, settings and queue).
+
+## No installer? (portable)
+
+Copy the files to a folder and double-click `Start YouTube MP3 Downloader.bat`.
+
+## Rebuilding the installer
+
+`installer/build.sh` (needs `makensis`, e.g. `apt install nsis`) regenerates `dist/YouTubeDownloader-Setup.exe`
+from `YouTubeMP3.ps1`, `assets/app.ico` and `installer/installer.nsi`. Rebuild it after changing the script.
 
 ## Options
 
