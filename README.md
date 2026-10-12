@@ -1,6 +1,6 @@
-# YouTube MP3 Downloader (Windows)
+# YouTube Downloader - MP3 and MP4 (Windows)
 
-A small window where you paste YouTube links; they download as MP3 one after
+A small window where you paste YouTube links; they download as MP3 (audio) and/or MP4 (video) one after
 another, in the order you added them. Nothing to install - it uses PowerShell,
 which is already part of Windows 10/11.
 
@@ -17,11 +17,14 @@ which is already part of Windows 10/11.
 
 | What | How |
 |---|---|
+| MP3, MP4, or both | Tick **MP3 (audio)** and/or **MP4 (video)** before pressing Add. Ticking both queues two rows per link (one audio, one video). **Video quality up to** caps the resolution (Best, 1080p ... 360p); video is H.264 + AAC where YouTube offers it, so it plays everywhere. The **Type** column shows which is which. |
 | Choose where files go | **Browse...** next to "Save to folder" (remembered next time) |
 | Keep the original title | Leave "Save as" empty |
-| Use your own name | Type it in "Save as" and add **one** link (".mp3" is added for you) |
+| Use your own name | Type it in "Save as" and add **one** link (".mp3" / ".mp4" is added for you, so the audio and video of a link can share one name) |
 | Limit downloads | "Limit: max **N** downloads per **A** *unit* + **B** *smaller unit*", e.g. 3 downloads per 1 Hours + 30 Minutes. The second dropdown only lists units smaller than the first (Hours -> Minutes, Seconds; Seconds -> none). N = 0 means no limit. Extra links wait in the queue and start by themselves when allowed. |
-| Pause / resume | **Pause** button (or the tray icon menu) |
+| Pause / resume | **Pause** button (or the tray icon menu); the same button turns into **Resume** |
+| Pause for a while | "Pause now, resume in **A** *unit* + **B** *smaller unit*" then **Pause for this long** (e.g. 1 Days + 6 Hours). Same dropdown rules as the limit. |
+| Pause until a date/time | Pick a date and time in "Or pause until", then **Pause until then**. A timed pause survives closing the app. |
 | Remove or cancel | Select rows -> **Remove / cancel selected** (also the Delete key or right-click). A running download is stopped and removed. Right-click -> Retry for failed ones. |
 | Links still waiting when you close | Saved and restored next time you open the app |
 
@@ -40,6 +43,7 @@ while it is running just brings the existing window back.
 - It uses `yt-dlp` directly instead of a website like yout.com: no ads, no
   per-hour cap from a third party, and it can be automated reliably. The
   hourly limit above is optional and only if you want to pace yourself.
+- A pause only stops *new* downloads from starting; the one already running finishes first.
 - A link to a video inside a playlist downloads just that one video.
 - If downloads start failing, click **Update yt-dlp** (YouTube changes often;
   the tool also checks for an update once a week).

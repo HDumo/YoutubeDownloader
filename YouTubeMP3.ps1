@@ -83,7 +83,7 @@ try {
 if (-not ((Test-Path $YtDlp) -and (Test-Path $Ffmpeg))) {
     [void][System.Windows.Forms.MessageBox]::Show(
         "The helper programs are missing.`r`nPlease start the tool with 'Start YouTube MP3 Downloader.bat' - it downloads them automatically.",
-        'YouTube MP3 Downloader')
+        'YouTube Downloader')
     exit 1
 }
 
@@ -111,7 +111,16 @@ $script:Settings = [ordered]@{
     Background = $true
     LastUpdate = ''
     StartTimes = @()
+    Mp3        = $true
+    Mp4        = $false
+    Quality    = 'Best'
+    PauseAmount1 = 1
+    PauseUnit1   = 'Hours'
+    PauseAmount2 = 0
+    PauseUnit2   = 'Minutes'
+    PausedUntil  = ''
 }
+$QualityNames   = @('Best', '1080p', '720p', '480p', '360p')
 if (-not $script:Settings['Folder']) { $script:Settings['Folder'] = [Environment]::GetFolderPath('Desktop') }
 
 $script:StartTimes = New-Object System.Collections.ArrayList   # when downloads began (for the limit)
@@ -127,6 +136,14 @@ if (Test-Path $SettingsFile) {
         if ($UnitNames -contains $saved.Unit2) { $script:Settings['Unit2'] = [string]$saved.Unit2 }
         if ($null -ne $saved.Background)  { $script:Settings['Background'] = [bool]$saved.Background }
         if ($saved.LastUpdate)            { $script:Settings['LastUpdate'] = [string]$saved.LastUpdate }
+        if ($null -ne $saved.Mp3)         { $script:Settings['Mp3'] = [bool]$saved.Mp3 }
+        if ($null -ne $saved.Mp4)         { $script:Settings['Mp4'] = [bool]$saved.Mp4 }
+        if ($QualityNames -contains $saved.Quality) { $script:Settings['Quality'] = [string]$saved.Quality }
+        if ($null -ne $saved.PauseAmount1) { $script:Settings['PauseAmount1'] = [int]$saved.PauseAmount1 }
+        if ($UnitNames -contains $saved.PauseUnit1) { $script:Settings['PauseUnit1'] = [string]$saved.PauseUnit1 }
+        if ($null -ne $saved.PauseAmount2) { $script:Settings['PauseAmount2'] = [int]$saved.PauseAmount2 }
+        if ($UnitNames -contains $saved.PauseUnit2) { $script:Settings['PauseUnit2'] = [string]$saved.PauseUnit2 }
+        if ($saved.PausedUntil)           { $script:Settings['PausedUntil'] = [string]$saved.PausedUntil }
         $inv = [Globalization.CultureInfo]::InvariantCulture
         foreach ($t in @($saved.StartTimes)) {
             try {
@@ -144,7 +161,7 @@ function Quote-Arg([string]$a) {
 
 function Clean-Name([string]$name) {
     $n = $name.Trim()
-    $n = $n -replace '(?i)\.mp3$', ''
+    $n = $n -replace '(?i)\.(mp3|mp4)$', ''
     $n = $n -replace '[\\/:*?"<>|]', '_'
     $n = $n.Trim(' ', '.')
     return $n
@@ -201,6 +218,7 @@ $script:OutTask    = $null
 $script:ErrTask    = $null
 $script:ExitSeen   = $null
 $script:Paused     = $false
+$script:ResumeAt   = $null                                     # when a timed pause ends
 $script:WasBusy    = $false
 $script:Quitting   = $false
 $script:TipShown   = $false
@@ -208,26 +226,29 @@ $script:Counter    = 0
 
 function Save-Queue {
     $pending = @($script:Items | Where-Object { $_.Status -eq 'Queued' -or $_.Status -eq 'Downloading' } |
-        ForEach-Object { [pscustomobject]@{ Url = $_.Url; Name = $_.Name; Folder = $_.Folder } })
+        ForEach-Object { [pscustomobject]@{ Url = $_.Url; Name = $_.Name; Folder = $_.Folder; Kind = $_.Kind; Height = $_.Height } })
     try { ConvertTo-Json -InputObject @($pending) | Set-Content -Path $QueueFile -Encoding UTF8 } catch { }
 }
 
 function Update-Row($item) {
     $lvi = $item.Row
-    $lvi.SubItems[1].Text = $item.Url
-    $lvi.SubItems[2].Text = $item.Display
-    $lvi.SubItems[3].Text = $item.Text
+    $lvi.SubItems[1].Text = $item.Kind
+    $lvi.SubItems[2].Text = $item.Url
+    $lvi.SubItems[3].Text = $item.Display
+    $lvi.SubItems[4].Text = $item.Text
 }
 
-function Add-QueueItem([string]$url, [string]$name, [string]$folder) {
+function Add-QueueItem([string]$url, [string]$name, [string]$folder, [string]$kind, [int]$height) {
+    if ($kind -ne 'MP4') { $kind = 'MP3' }
     $script:Counter++
     $item = [pscustomobject]@{
-        Id = $script:Counter; Url = $url; Name = $name; Folder = $folder
+        Id = $script:Counter; Url = $url; Name = $name; Folder = $folder; Kind = $kind; Height = $height
         Display = $(if ($name) { $name } else { '(original title)' })
         Text = 'Queued'; Status = 'Queued'; Row = $null
         LastError = $null; RemoveWhenDone = $false
     }
     $lvi = New-Object System.Windows.Forms.ListViewItem([string]$item.Id)
+    [void]$lvi.SubItems.Add($kind)
     [void]$lvi.SubItems.Add($url)
     [void]$lvi.SubItems.Add($item.Display)
     [void]$lvi.SubItems.Add($item.Text)
@@ -329,8 +350,17 @@ function Start-Download($item) {
         if (-not (Test-Path $folder)) { New-Item -ItemType Directory -Path $folder -Force | Out-Null }
         $template = Join-Path $folder $leaf
 
-        $argList = @(
-            '-x', '--audio-format', 'mp3', '--audio-quality', '0',
+        if ($item.Kind -eq 'MP4') {
+            # Prefer H.264 + AAC (plays everywhere); fall back to whatever is best.
+            $cap = if ($item.Height -gt 0) { '[height<=' + $item.Height + ']' } else { '' }
+            $fmt = 'bv*[vcodec^=avc1]' + $cap + '+ba[acodec^=mp4a]/b[ext=mp4]' + $cap + '/bv*' + $cap + '+ba/b' + $cap
+            $argList = @(
+                '-f', $fmt, '--merge-output-format', 'mp4'
+            )
+        } else {
+            $argList = @('-x', '--audio-format', 'mp3', '--audio-quality', '0')
+        }
+        $argList += @(
             '--no-playlist', '--newline', '--windows-filenames', '--embed-metadata',
             '--ffmpeg-location', $ToolsDir,
             '-o', $template,
@@ -376,7 +406,9 @@ function Handle-Line($line, $item, [bool]$isErr) {
     if ($line -match '^\[download\]\s+([\d\.]+)%') {
         $item.Text = 'Downloading ' + $Matches[1] + '%'
     } elseif ($line -match '^\[download\] Destination: (.+)$') {
-        if (-not $item.Name) { $item.Display = [IO.Path]::GetFileNameWithoutExtension($Matches[1]) }
+        if (-not $item.Name) { $item.Display = ([IO.Path]::GetFileNameWithoutExtension($Matches[1]) -replace '\.f\d+$', '') }
+    } elseif ($line -match '^\[Merger\]') {
+        $item.Text = 'Joining video and audio...'
     } elseif ($line -match '^\[ExtractAudio\]') {
         $item.Text = 'Converting to MP3...'
         if ($line -match 'Destination: (.+)$' -and -not $item.Name) {
@@ -437,13 +469,20 @@ function Pump-Process {
 
 function Set-Status([string]$text) {
     $lblStatus.Text = $text
-    $tip = 'YouTube MP3: ' + $text
+    $tip = 'YouTube DL: ' + $text
     if ($tip.Length -gt 63) { $tip = $tip.Substring(0, 60) + '...' }
     $script:Tray.Text = $tip
 }
 
 function Tick {
     if ($script:ShowEvent.WaitOne(0)) { Show-Window }
+
+    if ($script:Paused -and $script:ResumeAt -and (Get-Date) -ge $script:ResumeAt) {
+        Clear-Pause
+        if (-not $form.Visible) {
+            $script:Tray.ShowBalloonTip(4000, 'YouTube Downloader', 'The pause is over - downloads are resuming.', [System.Windows.Forms.ToolTipIcon]::Info)
+        }
+    }
 
     $waiting = @($script:Items | Where-Object { $_.Status -eq 'Queued' }).Count
 
@@ -462,12 +501,16 @@ function Tick {
         if ($script:WasBusy) {
             $script:WasBusy = $false
             if (-not $form.Visible) {
-                $script:Tray.ShowBalloonTip(4000, 'YouTube MP3 Downloader', 'The queue is finished.', [System.Windows.Forms.ToolTipIcon]::Info)
+                $script:Tray.ShowBalloonTip(4000, 'YouTube Downloader', 'The queue is finished.', [System.Windows.Forms.ToolTipIcon]::Info)
             }
         }
         return
     }
-    if ($script:Paused) { Set-Status ("Paused (" + $waiting + " waiting)"); return }
+    if ($script:Paused) {
+        $until = $(if ($script:ResumeAt) { ' until ' + (Format-Resume $script:ResumeAt) } else { '' })
+        Set-Status ("Paused" + $until + " (" + $waiting + " waiting)")
+        return
+    }
 
     $allowed = Get-NextAllowedTime
     if ($allowed) {
@@ -481,9 +524,9 @@ function Tick {
 $appIcon = New-AppIcon
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = 'YouTube MP3 Downloader'
-$form.ClientSize = New-Object System.Drawing.Size(850, 620)
-$form.MinimumSize = New-Object System.Drawing.Size(740, 560)
+$form.Text = 'YouTube Downloader (MP3 / MP4)'
+$form.ClientSize = New-Object System.Drawing.Size(850, 668)
+$form.MinimumSize = New-Object System.Drawing.Size(740, 480)
 $form.StartPosition = 'CenterScreen'
 $form.Font = New-Object System.Drawing.Font('Segoe UI', 9.5)
 $form.Icon = $appIcon
@@ -494,31 +537,31 @@ function New-Label($text, $x, $y) {
     $form.Controls.Add($l); return $l
 }
 
-[void](New-Label 'Paste YouTube link(s) - one per line:' 14 10)
+[void](New-Label 'Paste YouTube link(s) - one per line:' 14 8)
 $txtUrl = New-Object System.Windows.Forms.TextBox
 $txtUrl.Multiline = $true; $txtUrl.ScrollBars = 'Vertical'
-$txtUrl.Location = New-Object System.Drawing.Point(14, 32)
-$txtUrl.Size = New-Object System.Drawing.Size(700, 62)
+$txtUrl.Location = New-Object System.Drawing.Point(14, 30)
+$txtUrl.Size = New-Object System.Drawing.Size(700, 50)
 $txtUrl.Anchor = 'Top,Left,Right'
 $form.Controls.Add($txtUrl)
 
 $btnAdd = New-Object System.Windows.Forms.Button
 $btnAdd.Text = 'Add to queue'
-$btnAdd.Location = New-Object System.Drawing.Point(724, 32)
-$btnAdd.Size = New-Object System.Drawing.Size(112, 62)
+$btnAdd.Location = New-Object System.Drawing.Point(724, 30)
+$btnAdd.Size = New-Object System.Drawing.Size(112, 50)
 $btnAdd.Anchor = 'Top,Right'
 $form.Controls.Add($btnAdd)
 
-[void](New-Label 'Save as (optional - leave empty to keep the original video title):' 14 102)
+[void](New-Label 'Save as (optional - leave empty to keep the original video title):' 14 86)
 $txtName = New-Object System.Windows.Forms.TextBox
-$txtName.Location = New-Object System.Drawing.Point(14, 124)
+$txtName.Location = New-Object System.Drawing.Point(14, 108)
 $txtName.Size = New-Object System.Drawing.Size(822, 26)
 $txtName.Anchor = 'Top,Left,Right'
 $form.Controls.Add($txtName)
 
-[void](New-Label 'Save to folder:' 14 158)
+[void](New-Label 'Save to folder:' 14 140)
 $txtFolder = New-Object System.Windows.Forms.TextBox
-$txtFolder.Location = New-Object System.Drawing.Point(14, 180)
+$txtFolder.Location = New-Object System.Drawing.Point(14, 162)
 $txtFolder.Size = New-Object System.Drawing.Size(606, 26)
 $txtFolder.Anchor = 'Top,Left,Right'
 $txtFolder.Text = $script:Settings['Folder']
@@ -526,94 +569,151 @@ $form.Controls.Add($txtFolder)
 
 $btnBrowse = New-Object System.Windows.Forms.Button
 $btnBrowse.Text = 'Browse...'
-$btnBrowse.Location = New-Object System.Drawing.Point(630, 178)
+$btnBrowse.Location = New-Object System.Drawing.Point(630, 160)
 $btnBrowse.Size = New-Object System.Drawing.Size(100, 28)
 $btnBrowse.Anchor = 'Top,Right'
 $form.Controls.Add($btnBrowse)
 
 $btnOpen = New-Object System.Windows.Forms.Button
 $btnOpen.Text = 'Open folder'
-$btnOpen.Location = New-Object System.Drawing.Point(736, 178)
+$btnOpen.Location = New-Object System.Drawing.Point(736, 160)
 $btnOpen.Size = New-Object System.Drawing.Size(100, 28)
 $btnOpen.Anchor = 'Top,Right'
 $form.Controls.Add($btnOpen)
 
-# --- download limit:  Max [N] downloads per [A] [unit] + [B] [smaller unit] ---
-$pnlLimit = New-Object System.Windows.Forms.FlowLayoutPanel
-$pnlLimit.Location = New-Object System.Drawing.Point(14, 212)
-$pnlLimit.Size = New-Object System.Drawing.Size(822, 34)
-$pnlLimit.Anchor = 'Top,Left,Right'
-$pnlLimit.WrapContents = $false
-$form.Controls.Add($pnlLimit)
-
-function New-FlowLabel($text) {
+# --- helpers to build the one-line option rows --------------------------------
+function New-FlowPanel($y) {
+    $p = New-Object System.Windows.Forms.FlowLayoutPanel
+    $p.Location = New-Object System.Drawing.Point(14, $y)
+    $p.Size = New-Object System.Drawing.Size(822, 32)
+    $p.Anchor = 'Top,Left,Right'
+    $p.WrapContents = $false
+    $form.Controls.Add($p); return $p
+}
+function New-FlowLabel($panel, $text) {
     $l = New-Object System.Windows.Forms.Label
     $l.Text = $text; $l.AutoSize = $true
     $l.Margin = New-Object System.Windows.Forms.Padding(0, 6, 4, 0)
-    $pnlLimit.Controls.Add($l); return $l
+    $panel.Controls.Add($l); return $l
 }
-function New-FlowNumber($max, $value) {
+function New-FlowNumber($panel, $max, $value) {
     $n = New-Object System.Windows.Forms.NumericUpDown
     $n.Minimum = 0; $n.Maximum = $max; $n.Value = [Math]::Min([Math]::Max($value, 0), $max)
     $n.Width = 62
     $n.Margin = New-Object System.Windows.Forms.Padding(0, 2, 8, 0)
-    $pnlLimit.Controls.Add($n); return $n
+    $panel.Controls.Add($n); return $n
 }
-function New-FlowUnit {
+function New-FlowCombo($panel, $width) {
     $c = New-Object System.Windows.Forms.ComboBox
-    $c.DropDownStyle = 'DropDownList'; $c.Width = 90
+    $c.DropDownStyle = 'DropDownList'; $c.Width = $width
     $c.Margin = New-Object System.Windows.Forms.Padding(0, 2, 8, 0)
-    $pnlLimit.Controls.Add($c); return $c
+    $panel.Controls.Add($c); return $c
 }
-
-[void](New-FlowLabel 'Limit: max')
-$numCount = New-FlowNumber 1000 $script:Settings['LimitCount']
-[void](New-FlowLabel 'downloads per')
-$numA = New-FlowNumber 9999 $script:Settings['Amount1']
-$cmbU1 = New-FlowUnit
-[void](New-FlowLabel '+')
-$numB = New-FlowNumber 9999 $script:Settings['Amount2']
-$cmbU2 = New-FlowUnit
-[void](New-FlowLabel '(0 downloads = no limit)')
-
-[void]$cmbU1.Items.AddRange([object[]]$UnitNames)
-$cmbU1.SelectedItem = $script:Settings['Unit1']
-if (-not $cmbU1.SelectedItem) { $cmbU1.SelectedItem = 'Hours' }
+function New-FlowButton($panel, $text, $width) {
+    $b = New-Object System.Windows.Forms.Button
+    $b.Text = $text; $b.Width = $width; $b.Height = 26
+    $b.Margin = New-Object System.Windows.Forms.Padding(4, 1, 8, 0)
+    $panel.Controls.Add($b); return $b
+}
 
 # The second dropdown only offers units SMALLER than the first one.
-function Fill-Unit2 {
-    $prev = [string]$cmbU2.SelectedItem
-    $cmbU2.Items.Clear()
-    $idx = [array]::IndexOf($UnitNames, [string]$cmbU1.SelectedItem)
+function Fill-SecondUnit($first, $num, $second) {
+    $prev = [string]$second.SelectedItem
+    $second.Items.Clear()
+    $idx = [array]::IndexOf($UnitNames, [string]$first.SelectedItem)
     $smaller = @($UnitNames | Select-Object -Skip ($idx + 1))
     if ($smaller.Count -eq 0) {
-        $numB.Value = 0
-        $numB.Enabled = $false
-        $cmbU2.Enabled = $false
+        $num.Value = 0
+        $num.Enabled = $false
+        $second.Enabled = $false
         return
     }
-    $numB.Enabled = $true
-    $cmbU2.Enabled = $true
-    [void]$cmbU2.Items.AddRange([object[]]$smaller)
-    if ($prev -and ($smaller -contains $prev)) { $cmbU2.SelectedItem = $prev }
-    else { $cmbU2.SelectedIndex = 0 }
+    $num.Enabled = $true
+    $second.Enabled = $true
+    [void]$second.Items.AddRange([object[]]$smaller)
+    if ($prev -and ($smaller -contains $prev)) { $second.SelectedItem = $prev }
+    else { $second.SelectedIndex = 0 }
 }
-Fill-Unit2
-if ($cmbU2.Enabled -and ($cmbU2.Items -contains $script:Settings['Unit2'])) {
-    $cmbU2.SelectedItem = $script:Settings['Unit2']
+function Init-UnitPair($first, $num, $second, $unit1, $unit2) {
+    [void]$first.Items.AddRange([object[]]$UnitNames)
+    $first.SelectedItem = $unit1
+    if (-not $first.SelectedItem) { $first.SelectedItem = 'Hours' }
+    Fill-SecondUnit $first $num $second
+    if ($second.Enabled -and ($second.Items -contains $unit2)) { $second.SelectedItem = $unit2 }
 }
-$cmbU1.Add_SelectedIndexChanged({ Fill-Unit2 })
+
+# --- what to download: MP3 and/or MP4 ------------------------------------------
+$pnlFormat = New-FlowPanel 192
+$chkMp3 = New-Object System.Windows.Forms.CheckBox
+$chkMp3.Text = 'MP3 (audio)'; $chkMp3.AutoSize = $true
+$chkMp3.Margin = New-Object System.Windows.Forms.Padding(0, 4, 14, 0)
+$chkMp3.Checked = [bool]$script:Settings['Mp3']
+$pnlFormat.Controls.Add($chkMp3)
+$chkMp4 = New-Object System.Windows.Forms.CheckBox
+$chkMp4.Text = 'MP4 (video)'; $chkMp4.AutoSize = $true
+$chkMp4.Margin = New-Object System.Windows.Forms.Padding(0, 4, 14, 0)
+$chkMp4.Checked = [bool]$script:Settings['Mp4']
+$pnlFormat.Controls.Add($chkMp4)
+[void](New-FlowLabel $pnlFormat 'Video quality up to:')
+$cmbQuality = New-FlowCombo $pnlFormat 80
+[void]$cmbQuality.Items.AddRange([object[]]$QualityNames)
+$cmbQuality.SelectedItem = $script:Settings['Quality']
+if (-not $cmbQuality.SelectedItem) { $cmbQuality.SelectedItem = 'Best' }
+$cmbQuality.Enabled = $chkMp4.Checked
+[void](New-FlowLabel $pnlFormat '(tick both to get the audio AND the video of every link)')
+$chkMp4.Add_CheckedChanged({ $cmbQuality.Enabled = $chkMp4.Checked })
+
+# --- download limit:  Max [N] downloads per [A] [unit] + [B] [smaller unit] ----
+$pnlLimit = New-FlowPanel 226
+[void](New-FlowLabel $pnlLimit 'Limit: max')
+$numCount = New-FlowNumber $pnlLimit 1000 $script:Settings['LimitCount']
+[void](New-FlowLabel $pnlLimit 'downloads per')
+$numA = New-FlowNumber $pnlLimit 9999 $script:Settings['Amount1']
+$cmbU1 = New-FlowCombo $pnlLimit 90
+[void](New-FlowLabel $pnlLimit '+')
+$numB = New-FlowNumber $pnlLimit 9999 $script:Settings['Amount2']
+$cmbU2 = New-FlowCombo $pnlLimit 90
+[void](New-FlowLabel $pnlLimit '(0 downloads = no limit)')
+Init-UnitPair $cmbU1 $numB $cmbU2 $script:Settings['Unit1'] $script:Settings['Unit2']
+$cmbU1.Add_SelectedIndexChanged({ Fill-SecondUnit $cmbU1 $numB $cmbU2 })
+
+# --- pause for a while:  resume in [A] [unit] + [B] [smaller unit] ---------------
+$pnlPauseFor = New-FlowPanel 260
+[void](New-FlowLabel $pnlPauseFor 'Pause now, resume in')
+$numPA = New-FlowNumber $pnlPauseFor 9999 $script:Settings['PauseAmount1']
+$cmbPU1 = New-FlowCombo $pnlPauseFor 90
+[void](New-FlowLabel $pnlPauseFor '+')
+$numPB = New-FlowNumber $pnlPauseFor 9999 $script:Settings['PauseAmount2']
+$cmbPU2 = New-FlowCombo $pnlPauseFor 90
+$btnPauseFor = New-FlowButton $pnlPauseFor 'Pause for this long' 150
+Init-UnitPair $cmbPU1 $numPB $cmbPU2 $script:Settings['PauseUnit1'] $script:Settings['PauseUnit2']
+$cmbPU1.Add_SelectedIndexChanged({ Fill-SecondUnit $cmbPU1 $numPB $cmbPU2 })
+
+# --- pause until a date and time ------------------------------------------------
+$pnlPauseUntil = New-FlowPanel 294
+[void](New-FlowLabel $pnlPauseUntil 'Or pause until')
+$dtpUntil = New-Object System.Windows.Forms.DateTimePicker
+$dtpUntil.Format = [System.Windows.Forms.DateTimePickerFormat]::Custom
+$dtpUntil.CustomFormat = 'ddd MMM d, yyyy   h:mm tt'
+$dtpUntil.Width = 270
+$dtpUntil.Margin = New-Object System.Windows.Forms.Padding(0, 2, 8, 0)
+$now = Get-Date
+$dtpUntil.Value = $now.AddHours(1).AddSeconds(-$now.Second)
+$pnlPauseUntil.Controls.Add($dtpUntil)
+$btnPauseUntil = New-FlowButton $pnlPauseUntil 'Pause until then' 150
+[void](New-FlowLabel $pnlPauseUntil '(a download already running finishes first)')
 
 $list = New-Object System.Windows.Forms.ListView
 $list.View = 'Details'; $list.FullRowSelect = $true; $list.GridLines = $true
 $list.MultiSelect = $true; $list.HideSelection = $false
-$list.Location = New-Object System.Drawing.Point(14, 254)
-$list.Size = New-Object System.Drawing.Size(822, 258)
+$list.Location = New-Object System.Drawing.Point(14, 332)
+$list.Size = New-Object System.Drawing.Size(822, 236)
 $list.Anchor = 'Top,Bottom,Left,Right'
 [void]$list.Columns.Add('#', 36)
-[void]$list.Columns.Add('Link', 270)
-[void]$list.Columns.Add('Save as', 210)
-[void]$list.Columns.Add('Status', 282)
+[void]$list.Columns.Add('Type', 50)
+[void]$list.Columns.Add('Link', 240)
+[void]$list.Columns.Add('Save as', 190)
+[void]$list.Columns.Add('Status', 270)
 $form.Controls.Add($list)
 
 $ctx = New-Object System.Windows.Forms.ContextMenuStrip
@@ -624,7 +724,7 @@ $list.ContextMenuStrip = $ctx
 function New-BottomButton($text, $x, $w) {
     $b = New-Object System.Windows.Forms.Button
     $b.Text = $text
-    $b.Location = New-Object System.Drawing.Point($x, 520)
+    $b.Location = New-Object System.Drawing.Point($x, 576)
     $b.Size = New-Object System.Drawing.Size($w, 30)
     $b.Anchor = 'Bottom,Left'
     $form.Controls.Add($b); return $b
@@ -637,7 +737,7 @@ $btnExit   = New-BottomButton 'Exit app' 566 100
 
 $chkBg = New-Object System.Windows.Forms.CheckBox
 $chkBg.Text = 'When I close this window, keep working in the background (find the icon under the hidden-icons arrow near the clock)'
-$chkBg.Location = New-Object System.Drawing.Point(14, 558)
+$chkBg.Location = New-Object System.Drawing.Point(14, 612)
 $chkBg.Size = New-Object System.Drawing.Size(822, 24)
 $chkBg.Anchor = 'Bottom,Left,Right'
 $chkBg.Checked = [bool]$script:Settings['Background']
@@ -645,7 +745,7 @@ $form.Controls.Add($chkBg)
 
 $lblStatus = New-Object System.Windows.Forms.Label
 $lblStatus.AutoSize = $false
-$lblStatus.Location = New-Object System.Drawing.Point(14, 588)
+$lblStatus.Location = New-Object System.Drawing.Point(14, 640)
 $lblStatus.Size = New-Object System.Drawing.Size(822, 24)
 $lblStatus.Anchor = 'Bottom,Left,Right'
 $lblStatus.Text = 'Idle - add a link above.'
@@ -654,7 +754,7 @@ $form.Controls.Add($lblStatus)
 # ------------------------------------------------------------ tray icon -----
 $script:Tray = New-Object System.Windows.Forms.NotifyIcon
 $script:Tray.Icon = $appIcon
-$script:Tray.Text = 'YouTube MP3 Downloader'
+$script:Tray.Text = 'YouTube Downloader'
 $trayMenu = New-Object System.Windows.Forms.ContextMenuStrip
 $miOpen  = $trayMenu.Items.Add('Open window')
 $miPause = $trayMenu.Items.Add('Pause')
@@ -682,11 +782,37 @@ function Hide-ToTray {
     }
 }
 
-function Toggle-Pause {
-    $script:Paused = -not $script:Paused
+function Update-PauseUI {
     $label = $(if ($script:Paused) { 'Resume' } else { 'Pause' })
     $btnPause.Text = $label
     $miPause.Text = $label
+}
+
+# $until = $null means "pause until I press Resume".
+function Set-Pause($until) {
+    $script:Paused = $true
+    $script:ResumeAt = $until
+    Update-PauseUI
+    Save-Settings
+}
+
+function Clear-Pause {
+    $script:Paused = $false
+    $script:ResumeAt = $null
+    Update-PauseUI
+    Save-Settings
+}
+
+function Toggle-Pause {
+    if ($script:Paused) { Clear-Pause } else { Set-Pause $null }
+}
+
+function Get-PauseSeconds {
+    $secs = [double]$numPA.Value * $UnitSeconds[[string]$cmbPU1.SelectedItem]
+    if ($cmbPU2.Enabled -and $cmbPU2.SelectedItem) {
+        $secs += [double]$numPB.Value * $UnitSeconds[[string]$cmbPU2.SelectedItem]
+    }
+    return $secs
 }
 
 function Exit-App {
@@ -711,6 +837,14 @@ function Sync-Settings {
     $s['Amount2']    = [int]$numB.Value
     $s['Unit2']      = $(if ($cmbU2.Enabled) { [string]$cmbU2.SelectedItem } else { '' })
     $s['Background'] = [bool]$chkBg.Checked
+    $s['Mp3']        = [bool]$chkMp3.Checked
+    $s['Mp4']        = [bool]$chkMp4.Checked
+    $s['Quality']    = [string]$cmbQuality.SelectedItem
+    $s['PauseAmount1'] = [int]$numPA.Value
+    $s['PauseUnit1']   = [string]$cmbPU1.SelectedItem
+    $s['PauseAmount2'] = [int]$numPB.Value
+    $s['PauseUnit2']   = $(if ($cmbPU2.Enabled) { [string]$cmbPU2.SelectedItem } else { '' })
+    $s['PausedUntil']  = $(if ($script:Paused -and $script:ResumeAt) { $script:ResumeAt.ToString('o') } else { '' })
     $s['StartTimes'] = @($script:StartTimes | ForEach-Object { $_.ToString('o') })
 }
 
@@ -723,7 +857,7 @@ function Save-Settings {
 
 $btnBrowse.Add_Click({
     $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
-    $dlg.Description = 'Choose where the MP3 files are saved'
+    $dlg.Description = 'Choose where the files are saved'
     if (Test-Path $txtFolder.Text) { $dlg.SelectedPath = $txtFolder.Text }
     if ($dlg.ShowDialog() -eq 'OK') { $txtFolder.Text = $dlg.SelectedPath; Save-Settings }
 })
@@ -757,13 +891,41 @@ $btnAdd.Add_Click({
     $folder = $txtFolder.Text.Trim()
     if (-not $folder) { [void][System.Windows.Forms.MessageBox]::Show('Please choose a folder first.', 'No folder'); return }
 
-    foreach ($u in $urls) { Add-QueueItem $u $name $folder }
+    $kinds = @()
+    if ($chkMp3.Checked) { $kinds += 'MP3' }
+    if ($chkMp4.Checked) { $kinds += 'MP4' }
+    if ($kinds.Count -eq 0) {
+        [void][System.Windows.Forms.MessageBox]::Show('Tick MP3, MP4, or both.', 'Nothing to download')
+        return
+    }
+    $height = 0
+    if ([string]$cmbQuality.SelectedItem -match '^(\d+)p$') { $height = [int]$Matches[1] }
+
+    foreach ($u in $urls) {
+        foreach ($k in $kinds) { Add-QueueItem $u $name $folder $k $height }
+    }
     $txtUrl.Clear(); $txtName.Clear()
     Save-Queue
     Save-Settings
 })
 
 $btnPause.Add_Click({ Toggle-Pause })
+$btnPauseFor.Add_Click({
+    $secs = Get-PauseSeconds
+    if ($secs -le 0) {
+        [void][System.Windows.Forms.MessageBox]::Show('Enter how long to pause, for example 2 Hours + 30 Minutes.', 'Pause for how long?')
+        return
+    }
+    Set-Pause ((Get-Date).AddSeconds($secs))
+})
+$btnPauseUntil.Add_Click({
+    $t = $dtpUntil.Value
+    if ($t -le (Get-Date)) {
+        [void][System.Windows.Forms.MessageBox]::Show('Pick a date and time in the future.', 'Pause until when?')
+        return
+    }
+    Set-Pause $t
+})
 $miPause.Add_Click({ Toggle-Pause })
 
 $btnRemove.Add_Click({
@@ -850,8 +1012,15 @@ $form.Add_Shown({
         try {
             $savedQ = Get-Content $QueueFile -Raw | ConvertFrom-Json
             foreach ($s in @($savedQ)) {
-                if ($s.Url) { Add-QueueItem ([string]$s.Url) ([string]$s.Name) ([string]$s.Folder) }
+                if ($s.Url) { Add-QueueItem ([string]$s.Url) ([string]$s.Name) ([string]$s.Folder) ([string]$s.Kind) ([int]$s.Height) }
             }
+        } catch { }
+    }
+    # A timed pause that was still running when the app was closed.
+    if ($script:Settings['PausedUntil']) {
+        try {
+            $t = [datetime]::Parse([string]$script:Settings['PausedUntil'], [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind)
+            if ($t -gt (Get-Date)) { Set-Pause $t }
         } catch { }
     }
     # YouTube changes often; refresh yt-dlp if it has not been updated for a week.
@@ -863,12 +1032,19 @@ $form.Add_Shown({
     $timer.Start()
 })
 
+# On small screens, make the window shorter (the list shrinks to fit).
+$workArea = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+$maxClient = $workArea.Height - 70
+if ($form.ClientSize.Height -gt $maxClient) {
+    $form.ClientSize = New-Object System.Drawing.Size(850, [Math]::Max($maxClient, 500))
+}
+
 # Application.Run (not ShowDialog) so the window can be hidden while the app keeps working.
 [System.Windows.Forms.Application]::Run($form)
 
 } catch {
     [void][System.Windows.Forms.MessageBox]::Show(
         "Something went wrong:`r`n`r`n" + $_.Exception.Message + "`r`n`r`n" + $_.ScriptStackTrace,
-        'YouTube MP3 Downloader')
+        'YouTube Downloader')
     exit 1
 }
