@@ -2,3 +2,6 @@ tools/
 settings.json
 queue.json
 setup-error.txt
+__pycache__/
+*.pyc
+mobile/android/build/

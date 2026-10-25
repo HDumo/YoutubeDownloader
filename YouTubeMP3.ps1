@@ -459,7 +459,7 @@ function Start-Download($item) {
 
         if ($item.Kind -eq 'MP4') {
             # Prefer H.264 + AAC (plays everywhere); fall back to whatever is best.
-            $cap = if ($item.Height -gt 0) { '[height<=' + $item.Height + ']' } else { '' }
+            $cap = if ($item.Height -gt 0) { '[height<=?' + $item.Height + ']' } else { '' }
             $fmt = 'bv*[vcodec^=avc1]' + $cap + '+ba[acodec^=mp4a]/b[ext=mp4]' + $cap + '/bv*' + $cap + '+ba/b' + $cap
             $argList = @(
                 '-f', $fmt, '--merge-output-format', 'mp4'
@@ -937,6 +937,7 @@ $btnRemove = New-BottomButton 'Remove / cancel selected' 112 190
 $btnClear  = New-BottomButton 'Clear finished' 310 120
 $btnUpdate = New-BottomButton 'Update yt-dlp' 438 130
 $btnExit   = New-BottomButton 'Exit app' 576 100
+$btnPhone  = New-BottomButton 'Phone / tablet access' 684 152
 
 $chkBg = New-Object System.Windows.Forms.CheckBox
 $chkBg.Text = 'When I close this window, keep working in the background (find the icon under the hidden-icons arrow near the clock)'
@@ -1177,6 +1178,16 @@ function Update-YtDlp {
 }
 $btnUpdate.Add_Click({ if (-not $script:Current) { Update-YtDlp } else { $lblStatus.Text = 'Wait for the current download to finish first.' } })
 
+$btnPhone.Add_Click({
+    $ps1 = Join-Path $AppDir 'PhoneServer.ps1'
+    if (-not (Test-Path $ps1)) {
+        [void][System.Windows.Forms.MessageBox]::Show('PhoneServer.ps1 was not found next to the app. Reinstall the app and keep "Phone and tablet access" ticked.', 'Phone access')
+        return
+    }
+    $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    Start-Process -FilePath $psExe -ArgumentList ('-NoProfile -ExecutionPolicy Bypass -File "' + $ps1 + '"')
+    $lblStatus.Text = 'A phone-server window opened - read the address and PIN there, then enter them on your phone.'
+})
 $btnExit.Add_Click({ Exit-App })
 $miExit.Add_Click({ Exit-App })
 $miOpen.Add_Click({ Show-Window })
