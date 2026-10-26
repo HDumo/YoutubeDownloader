@@ -3,7 +3,7 @@
 Unicode True
 !define APPNAME   "YouTube Downloader"
 !define APPKEY    "YouTubeDownloader"
-!define VERSION   "1.0.0"
+!define VERSION   "2.0.0"
 !define PUBLISHER "HDumo"
 !define PSEXE     "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe"
 !define PSARGS    '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -STA -File "$INSTDIR\YouTubeMP3.ps1"'
@@ -35,7 +35,7 @@ VIAddVersionKey "LegalCopyright"  "Free to use"
 !define MUI_UNWELCOMEFINISHPAGE_BITMAP "wizard-side.bmp"
 
 !define MUI_WELCOMEPAGE_TITLE "Welcome to ${APPNAME}"
-!define MUI_WELCOMEPAGE_TEXT "This installs ${APPNAME} for your Windows account.$\r$\n$\r$\nPaste YouTube links, pick MP3 and/or MP4, and let the queue do the work - even in the background.$\r$\n$\r$\nNo administrator rights are needed. The first time you start it, it downloads two free helper programs (yt-dlp and ffmpeg, about 150 MB)."
+!define MUI_WELCOMEPAGE_TEXT "This installs ${APPNAME} for your Windows account.$\r$\n$\r$\nPaste YouTube links, pick MP3 and/or MP4, and let the queue do the work - even in the background. Includes phone and tablet access for Android and iPhone.$\r$\n$\r$\nNo administrator rights are needed. The first time you start it, it downloads two free helper programs (yt-dlp and ffmpeg, about 150 MB)."
 !define MUI_COMPONENTSPAGE_SMALLDESC
 !define MUI_FINISHPAGE_TITLE "${APPNAME} is installed"
 !define MUI_FINISHPAGE_RUN
@@ -88,6 +88,20 @@ Section "${APPNAME} (required)" SecMain
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APPKEY}" "NoRepair" 1
 SectionEnd
 
+Section "Phone and tablet access (Android / iPhone)" SecPhone
+  SetShellVarContext current
+  SetOutPath "$INSTDIR"
+  File "..\PhoneServer.ps1"
+  File "..\Start Phone Server.bat"
+  SetOutPath "$INSTDIR\mobile\server"
+  File "..\mobile\server\ytdl_server.py"
+  SetOutPath "$INSTDIR\mobile\server\web"
+  File "..\mobile\server\web\*.*"
+  SetOutPath "$INSTDIR"
+  CreateDirectory "$SMPROGRAMS\${APPNAME}"
+  CreateShortCut "$SMPROGRAMS\${APPNAME}\${APPNAME} - Phone Server.lnk" "${PSEXE}" '-NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\PhoneServer.ps1"' "$INSTDIR\app.ico" 0 SW_SHOWNORMAL "" "Use this PC as the server for your Android phone or iPhone"
+SectionEnd
+
 Section "Desktop shortcut" SecDesktop
   SetShellVarContext current
   SetOutPath "$INSTDIR"
@@ -108,6 +122,7 @@ SectionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
   !insertmacro MUI_DESCRIPTION_TEXT ${SecMain}      "The program itself."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecPhone}     "Lets your Android phone, iPhone or iPad queue downloads on this PC (adds a Phone Server item to the Start menu)."
   !insertmacro MUI_DESCRIPTION_TEXT ${SecDesktop}   "Puts a ${APPNAME} icon on your desktop."
   !insertmacro MUI_DESCRIPTION_TEXT ${SecStart}     "Adds ${APPNAME} to the Start menu."
   !insertmacro MUI_DESCRIPTION_TEXT ${SecAutostart} "Starts ${APPNAME} hidden in the system tray whenever you sign in to Windows, so queued downloads keep going."

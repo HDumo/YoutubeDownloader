@@ -1,64 +1,56 @@
-# YouTube Downloader - MP3 and MP4 (Windows)
+# YouTube Downloader - Windows, Android and iPhone
 
-A small window where you paste YouTube links; they download as MP3 (audio) and/or MP4 (video) one after
-another, in the order you added them. It runs on PowerShell, which is already part of Windows 10/11,
-and comes with a normal installer (.exe).
+Paste YouTube links, choose **MP3 (audio)** and/or **MP4 (video)**, and let an ordered queue download them one by one.
+Optional limits ("max 3 downloads per 1 hour + 30 minutes"), timed pauses, your own file names and folders, and it keeps
+working in the background.
 
-## Install (recommended)
+| You have | Download | Guide |
+|---|---|---|
+| **Windows PC** | [YouTubeDownloader-Setup.exe](https://github.com/HDumo/YoutubeDownloader/raw/main/dist/YouTubeDownloader-Setup.exe) | [docs/WINDOWS.md](docs/WINDOWS.md) |
+| **Android phone** | [YouTubeDownloader.apk](https://github.com/HDumo/YoutubeDownloader/raw/main/dist/YouTubeDownloader.apk) | [docs/ANDROID.md](docs/ANDROID.md) |
+| **iPhone / iPad** | nothing to install - use Safari (no App Store app exists) | [docs/IOS.md](docs/IOS.md) |
+| Mac / Linux / Raspberry Pi / NAS (as the server) | [YouTubeDownloader-PhoneServer.zip](https://github.com/HDumo/YoutubeDownloader/raw/main/dist/YouTubeDownloader-PhoneServer.zip) | [docs/ANDROID.md](docs/ANDROID.md#option-c---any-other-computer-as-the-server) |
 
-1. Download **[YouTubeDownloader-Setup.exe](https://github.com/HDumo/YoutubeDownloader/raw/main/dist/YouTubeDownloader-Setup.exe)**.
-2. Run it. The wizard installs for your Windows account only (no administrator rights).
-   On the "Choose Components" page the **Desktop shortcut** and **Start Menu shortcut** are ticked by default;
-   **Start with Windows** (quietly, in the tray) is optional.
-3. Leave "Start YouTube Downloader now" ticked on the last page, or double-click the new desktop icon.
-4. First start only: a small window downloads the two free helpers (`yt-dlp` and `ffmpeg`, ~150 MB). Then the app opens.
+## How the pieces fit
 
-If Windows says **"Windows protected your PC"**, click **More info -> Run anyway** (the installer is not code-signed).
-Updating: run a newer setup over the old one - your queue and settings are kept.
-Uninstall: Windows Settings -> Apps -> YouTube Downloader (this also deletes its helpers, settings and queue).
+```
+ Windows desktop app  ---------------------------- downloads on the PC (queue, MP3/MP4, limits, pauses, tray icon)
 
-## No installer? (portable)
+ Phone edition  = small server + mobile web app (same features, big touch buttons, dark mode)
+      server runs on:  your Windows PC  |  the Android phone itself (Termux)  |  Mac / Linux / Raspberry Pi
+      used from:       Android app (APK) | Chrome | iPhone Safari / "Add to Home Screen" | any browser
+```
 
-Copy the files to a folder and double-click `Start YouTube MP3 Downloader.bat`.
+* The desktop app needs **no Python and no admin rights**; it downloads `yt-dlp` and `ffmpeg` on first start.
+* The phone edition is protected by a **PIN** shown when the server starts, and only works on your own network.
+* **iPhone/iPad cannot run the downloader themselves** (iOS does not allow it); they use a server running on a PC or an
+  Android phone and save the finished files to the Files app.
 
-## Rebuilding the installer
+## What it does
 
-`installer/build.sh` (needs `makensis`, e.g. `apt install nsis`) regenerates `dist/YouTubeDownloader-Setup.exe`
-from `YouTubeMP3.ps1`, `assets/app.ico` and `installer/installer.nsi`. Rebuild it after changing the script.
+* Queue in the order you add links; one download at a time.
+* **MP3 and/or MP4** per link (tick both for audio *and* video). MP4 quality cap: Best, 1080p, 720p, 480p, 360p.
+* **Save as** - keep the original title or type your own name; choose the folder.
+* **Limit**: *max N downloads per A [unit] + B [smaller unit]* (e.g. 3 per 1 Hours + 30 Minutes). Extra links wait and start by themselves.
+* **Pause** now, *resume in* A [unit] + B [smaller unit], or *pause until* a date and time.
+* Remove / cancel / retry any item; the queue survives closing the app.
+* Windows: closing the window keeps it running in the system tray.
 
-## Options
+Only download audio and video you have the right to (your own uploads, Creative Commons, or with the owner's permission);
+downloading can break YouTube's Terms of Service.
 
-| What | How |
+## Screenshots (mobile web app)
+
+<img src="docs/screenshots/iphone-add.png" width="220"> <img src="docs/screenshots/iphone-queue.png" width="220"> <img src="docs/screenshots/iphone-dark-queue.png" width="220">
+
+## For developers
+
+| Path | What |
 |---|---|
-| MP3, MP4, or both | Tick **MP3 (audio)** and/or **MP4 (video)** before pressing Add. Ticking both queues two rows per link (one audio, one video). **Video quality up to** caps the resolution (Best, 1080p ... 360p); video is H.264 + AAC where YouTube offers it, so it plays everywhere. The **Type** column shows which is which. |
-| Choose where files go | **Browse...** next to "Save to folder" (remembered next time) |
-| Keep the original title | Leave "Save as" empty |
-| Use your own name | Type it in "Save as" and add **one** link (".mp3" / ".mp4" is added for you, so the audio and video of a link can share one name) |
-| Limit downloads | "Limit: max **N** downloads per **A** *unit* + **B** *smaller unit*", e.g. 3 downloads per 1 Hours + 30 Minutes. The second dropdown only lists units smaller than the first (Hours -> Minutes, Seconds; Seconds -> none). N = 0 means no limit. Extra links wait in the queue and start by themselves when allowed. |
-| Pause / resume | **Pause** button (or the tray icon menu); the same button turns into **Resume** |
-| Pause for a while | "Pause now, resume in **A** *unit* + **B** *smaller unit*" then **Pause for this long** (e.g. 1 Days + 6 Hours). Same dropdown rules as the limit. |
-| Pause until a date/time | Pick a date and time in "Or pause until", then **Pause until then**. A timed pause survives closing the app. |
-| Remove or cancel | Select rows -> **Remove / cancel selected** (also the Delete key or right-click). A running download is stopped and removed. Right-click -> Retry for failed ones. |
-| Links still waiting when you close | Saved and restored next time you open the app |
-
-## Background mode
-
-Closing the window with the X does **not** quit: the app keeps downloading from
-the system tray. Click the **^** arrow next to the clock to find its red icon
-(Windows calls these "hidden icons"). Double-click it to open the window;
-right-click for Open / Pause / Exit. Use the **Exit app** button or the tray
-menu's Exit to really quit. Untick "When I close this window, keep working in
-the background" if you would rather the X quit the app. Starting the .bat again
-while it is running just brings the existing window back.
-
-## Notes
-
-- It uses `yt-dlp` directly instead of a website like yout.com: no ads, no
-  per-hour cap from a third party, and it can be automated reliably. The
-  hourly limit above is optional and only if you want to pace yourself.
-- A pause only stops *new* downloads from starting; the one already running finishes first.
-- A link to a video inside a playlist downloads just that one video.
-- If downloads start failing, click **Update yt-dlp** (YouTube changes often;
-  the tool also checks for an update once a week).
-- Only download audio you have the right to (your own uploads, Creative Commons,
-  permission from the owner). Downloading can break YouTube's Terms of Service.
+| `YouTubeMP3.ps1` | Windows desktop app (PowerShell + WinForms) |
+| `PhoneServer.ps1`, `Start Phone Server.bat` | Windows launcher for the phone server (fetches a private Python) |
+| `mobile/server/ytdl_server.py`, `mobile/server/web/` | Phone server (Python standard library only) + mobile web app |
+| `mobile/android/` | Android app source, `build-apk.sh`, `termux-setup.sh` |
+| `installer/` | NSIS installer script and artwork generator |
+| `tests/`, `mobile/tests/` | All automated tests - run `sh tests/run-all.sh` (see [docs/TESTING.md](docs/TESTING.md)) |
+| `build-release.sh` | Rebuilds everything in `dist/` |

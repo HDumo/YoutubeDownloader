@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>YouTube Downloader</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f2937">
+<meta name="color-scheme" content="light dark">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="YT Downloader">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="icon" href="/icon-192.png">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="top">
+  <img src="/icon-192.png" alt="" class="logo" width="40" height="40">
+  <div class="top-text">
+    <h1>YouTube Downloader</h1>
+    <div id="pill" class="pill" role="status" aria-live="polite">Connecting...</div>
+  </div>
+</header>
+
+<main id="app" hidden>
+  <section data-tab="add" class="card-stack">
+    <div class="card">
+      <label for="urls">Paste YouTube link(s) - one per line</label>
+      <textarea id="urls" rows="4" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="https://youtu.be/..."></textarea>
+
+      <div class="row wrap gap">
+        <label class="check"><input type="checkbox" id="mp3" checked> <span>MP3 (audio)</span></label>
+        <label class="check"><input type="checkbox" id="mp4"> <span>MP4 (video)</span></label>
+      </div>
+      <div class="row gap" id="qualityRow">
+        <label for="quality" class="inline">Video quality up to</label>
+        <select id="quality"><option value="best">Best</option><option>1080p</option><option>720p</option><option>480p</option><option>360p</option></select>
+      </div>
+      <p class="hint">Tick both to get the audio <b>and</b> the video of every link.</p>
+
+      <label for="name">Save as <span class="muted">(optional - empty keeps the original title)</span></label>
+      <input id="name" type="text" autocomplete="off" placeholder="My song">
+      <label for="subfolder">Save in folder <span class="muted">(optional)</span></label>
+      <input id="subfolder" type="text" autocomplete="off" placeholder="Road trip">
+      <p class="hint">Files are saved on <b id="outDir">the server</b>. Use the Files tab to copy them to this phone.</p>
+
+      <button id="addBtn" class="btn primary block">Add to queue</button>
+    </div>
+  </section>
+
+  <section data-tab="queue" hidden>
+    <div class="card bar-card">
+      <button id="pauseBtn" class="btn">Pause</button>
+      <button id="clearBtn" class="btn">Clear finished</button>
+    </div>
+    <ul id="queue" class="list"></ul>
+    <p id="queueEmpty" class="empty">Nothing in the queue yet. Add a link on the first tab.</p>
+  </section>
+
+  <section data-tab="files" hidden>
+    <div class="card bar-card"><button id="filesRefresh" class="btn">Refresh</button></div>
+    <ul id="files" class="list"></ul>
+    <p id="filesEmpty" class="empty">No downloaded files yet.</p>
+  </section>
+
+  <section data-tab="settings" hidden class="card-stack">
+    <div class="card">
+      <h2>Limit downloads</h2>
+      <div class="row wrap gap center">
+        <span>Max</span><input id="limCount" type="number" min="0" max="1000" inputmode="numeric" class="num">
+        <span>downloads per</span>
+      </div>
+      <div class="row wrap gap center">
+        <input id="limA" type="number" min="0" max="9999" inputmode="numeric" class="num">
+        <select id="limU1" class="unit"></select>
+        <span>+</span>
+        <input id="limB" type="number" min="0" max="9999" inputmode="numeric" class="num">
+        <select id="limU2" class="unit"></select>
+      </div>
+      <p class="hint">0 downloads = no limit. The second unit only offers smaller units. Extra links wait and start automatically.</p>
+      <button id="limSave" class="btn block">Save limit</button>
+    </div>
+
+    <div class="card">
+      <h2>Pause</h2>
+      <p class="label-line">Pause now, resume in</p>
+      <div class="row wrap gap center">
+        <input id="pA" type="number" min="0" max="9999" inputmode="numeric" class="num" value="1">
+        <select id="pU1" class="unit"></select>
+        <span>+</span>
+        <input id="pB" type="number" min="0" max="9999" inputmode="numeric" class="num" value="0">
+        <select id="pU2" class="unit"></select>
+      </div>
+      <button id="pauseFor" class="btn block">Pause for this long</button>
+      <p class="label-line">Or pause until</p>
+      <input id="pUntil" type="datetime-local">
+      <button id="pauseUntil" class="btn block">Pause until then</button>
+      <p class="hint">A download that is already running finishes first.</p>
+    </div>
+
+    <div class="card">
+      <h2>Server</h2>
+      <p class="kv"><span>Saving to</span><b id="infoOut">-</b></p>
+      <p class="kv"><span>yt-dlp</span><b id="infoYt">-</b></p>
+      <p class="kv"><span>App version</span><b id="infoVer">-</b></p>
+      <button id="updateYt" class="btn block">Update yt-dlp</button>
+      <pre id="updateOut" class="out" hidden></pre>
+      <button id="changeServer" class="btn block" hidden>Change server</button>
+    </div>
+  </section>
+</main>
+
+<nav id="tabs" class="tabs" hidden>
+  <button data-tab="add" class="on"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Add</span></button>
+  <button data-tab="queue"><svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h14M5 17h9"/></svg><span>Queue</span><i id="queueCount" hidden>0</i></button>
+  <button data-tab="files"><svg viewBox="0 0 24 24"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg><span>Files</span></button>
+  <button data-tab="settings"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg><span>Settings</span></button>
+</nav>
+
+<div id="login" class="login" hidden>
+  <form class="card" id="loginForm" autocomplete="off">
+    <img src="/icon-192.png" alt="" width="64" height="64">
+    <h2>Enter your PIN</h2>
+    <p class="hint">The PIN is shown in the window where the server is running.</p>
+    <input id="pin" type="password" inputmode="numeric" autocomplete="one-time-code" placeholder="PIN" aria-label="PIN">
+    <p id="loginErr" class="err" role="alert"></p>
+    <button class="btn primary block" type="submit">Unlock</button>
+    <button id="loginChange" class="btn block" type="button" hidden>Change server</button>
+  </form>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<script src="/app.js"></script>
+</body>
+</html>
