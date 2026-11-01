@@ -5,8 +5,9 @@ import glob, os, sys, tempfile, threading, time, importlib.util
 from playwright.sync_api import sync_playwright, expect
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-spec = importlib.util.spec_from_file_location("ytdl_server", os.path.join(HERE, "..", "server", "ytdl_server.py"))
-S = importlib.util.module_from_spec(spec); spec.loader.exec_module(S)
+spec = importlib.util.spec_from_file_location("contract_test", os.path.join(HERE, "contract_test.py"))
+CT = importlib.util.module_from_spec(spec); spec.loader.exec_module(CT)      # Srv = starts the Python or Go server as a process
+IMPLS = [i for i in os.environ.get("YTDL_IMPLS", "python,go").split(",") if i]
 SHOTS = sys.argv[1] if len(sys.argv) > 1 else os.path.join(tempfile.gettempdir(), "ytdl-shots")
 os.makedirs(SHOTS, exist_ok=True)
 PIN = "135790"
@@ -18,17 +19,10 @@ def check(name, ok, extra=""):
     print(("PASS  " if ok else "FAIL  ") + name + (("  - " + str(extra)) if (extra and not ok) else ""), flush=True)
 
 
-def fresh_server():
-    tmp = tempfile.TemporaryDirectory()
-    mgr = S.Manager(os.path.join(tmp.name, "d"), os.path.join(tmp.name, "o"), [sys.executable, os.path.join(HERE, "fake_ytdlp.py")], None, PIN)
-    httpd = S.make_server(mgr, "127.0.0.1", 0)
-    mgr.start()
-    threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.1}, daemon=True).start()
-    return tmp, mgr, httpd, "http://127.0.0.1:%d" % httpd.server_address[1]
-
-
-def run_device(pw, label, ctx_opts):
-    tmp, mgr, httpd, base = fresh_server()
+def run_device(pw, label, ctx_opts, impl="python"):
+    srv = CT.Srv(impl, pin=PIN, extra=(["--mac-features"] if impl == "go" else [])).start()
+    base = "http://127.0.0.1:%d" % srv.port
+    label = label + "-" + impl
     browser = pw.chromium.launch(executable_path=CHROME, args=["--no-sandbox"])
     ctx = browser.new_context(**ctx_opts)
     page = ctx.new_page()
@@ -114,6 +108,9 @@ def run_device(pw, label, ctx_opts):
 
         # ---- settings: unit rules, limit, pauses ----
         page.click('#tabs button[data-tab="settings"]')
+        card_visible = page.locator("#computerCard").is_visible()
+        check(P + ("'This computer' card shown (Go server, opened on the computer itself)" if impl == "go" else "'This computer' card hidden (Python server has no computer controls)"),
+              card_visible == (impl == "go"))
         opts = lambda sel: page.locator(sel + " option").all_inner_texts()
         page.select_option("#limU1", "days")
         check(P + "days -> second unit offers Hours/Minutes/Seconds", opts("#limU2") == ["Hours", "Minutes", "Seconds"], opts("#limU2"))
@@ -186,15 +183,109 @@ def run_device(pw, label, ctx_opts):
         try: page.screenshot(path=os.path.join(SHOTS, label + "-error.png"))
         except Exception: pass
     finally:
-        browser.close(); mgr.shutdown(); httpd.shutdown(); httpd.server_close(); tmp.cleanup()
+        browser.close(); srv.close()
+
+
+def run_go_computer_ui(pw):
+    """The Mac-style 'This computer' controls and the first-run setup banner, driven in a real browser (Go server)."""
+    import shutil, gzip, http.server, functools, plistlib
+    P = "Mac-style: "
+    # a tool host that is deliberately slow so the progress banner can be seen
+    tools = tempfile.mkdtemp(prefix="ytdl-slow-")
+    shutil.copy(CT.FAKE, os.path.join(tools, "yt-dlp_fake")); os.chmod(os.path.join(tools, "yt-dlp_fake"), 0o755)
+    with gzip.open(os.path.join(tools, "ffmpeg-fake.gz"), "wb") as g:
+        g.write(b"#!/bin/sh\necho 'ffmpeg version fake'\n" + os.urandom(600000))
+    class Slow(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, *a, **k): pass
+        def copyfile(self, src, dst):
+            while True:
+                chunk = src.read(40000)
+                if not chunk: break
+                dst.write(chunk); dst.flush(); time.sleep(0.25)
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Slow, directory=tools))
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    u = lambda n: "http://127.0.0.1:%d/%s" % (httpd.server_address[1], n)
+    srv = CT.Srv("go", fake=False, pin=PIN, extra=["--mac-features"], env={"YTDL_YTDLP_URL": u("yt-dlp_fake"), "YTDL_FFMPEG_URL": u("ffmpeg-fake.gz"), "YTDL_NO_SYSTEM_TOOLS": "1"})
+    srv.cmd_orig = srv.cmd; srv.cmd = lambda: [a for a in srv.cmd_orig() if a != "--no-setup"]
+    srv.start()
+    base = "http://127.0.0.1:%d" % srv.port
+    browser = pw.chromium.launch(executable_path=CHROME, args=["--no-sandbox"])
+    ctx = browser.new_context(viewport={"width": 1100, "height": 900}); page = ctx.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("dialog", lambda d: d.accept())
+    try:
+        page.goto(base); page.fill("#pin", PIN); page.click("#loginForm button[type=submit]")
+        expect(page.locator("#app")).to_be_visible()
+        expect(page.locator("#setupBar")).to_be_visible(timeout=8000)
+        expect(page.locator("#setupText")).to_contain_text("Getting ready")
+        check(P + "first-run banner shows download progress", True)
+        page.screenshot(path=os.path.join(SHOTS, "Mac-1-first-run-setup.png"))
+        expect(page.locator("#pill")).to_contain_text("Getting ready")
+        expect(page.locator("#setupBar")).to_be_hidden(timeout=40000)
+        check(P + "banner disappears when the helpers are installed", True)
+        # a link now downloads with the helper that was just fetched
+        page.fill("#urls", "https://youtu.be/macfirst"); page.click("#addBtn")
+        page.wait_for_selector("#queue li.s-done", timeout=20000)
+        check(P + "queue works right after first-run setup", True)
+
+        page.click('#tabs button[data-tab="settings"]')
+        expect(page.locator("#computerCard")).to_be_visible()
+        expect(page.locator("#pinShow")).to_have_text(PIN)
+        check(P + "settings show the PIN on the computer itself", True)
+        expect(page.locator("#folderChoose")).to_be_hidden()
+        check(P + "native folder picker hidden when not on a Mac", True)
+        page.screenshot(path=os.path.join(SHOTS, "Mac-2-settings.png"), full_page=True)
+
+        plist = os.path.join(srv.home, "Library", "LaunchAgents", "com.hdumo.youtubedownloader.plist")
+        page.check("#autoToggle"); expect(page.locator("#toast")).to_contain_text("start when you log in")
+        check(P + "'Start when I log in' writes the LaunchAgent", os.path.isfile(plist))
+        page.uncheck("#autoToggle"); expect(page.locator("#toast")).to_contain_text("Will not start")
+        check(P + "turning it off removes the LaunchAgent", not os.path.exists(plist))
+
+        def reachable():
+            try: return srv.raw("GET", "/api/health", auth=False, ip="127.0.0.2")[0] == 200
+            except OSError: return False
+        check(P + "Wi-Fi access starts OFF (only this computer can connect)", not reachable())
+        page.check("#lanToggle"); expect(page.locator("#toast")).to_contain_text("can now connect")
+        expect(page.locator("#lanInfo")).to_be_visible()
+        check(P + "Wi-Fi switch opens the server to other devices", reachable())
+        page.screenshot(path=os.path.join(SHOTS, "Mac-3-wifi-on.png"), full_page=True)
+        page.uncheck("#lanToggle"); expect(page.locator("#toast")).to_contain_text("Wi-Fi access is off")
+        time.sleep(0.5)
+        check(P + "Wi-Fi switch closes it again", not reachable())
+
+        newdir = os.path.join(srv.home, "Music", "From UI")
+        page.fill("#folderInput", newdir); page.click("#folderSave")
+        expect(page.locator("#toast")).to_contain_text("Folder saved")
+        check(P + "save folder can be changed", os.path.isdir(newdir))
+        page.fill("#folderInput", "/etc"); page.click("#folderSave")
+        expect(page.locator("#toast")).to_contain_text("inside your home folder")
+        check(P + "a folder outside the home folder is refused", True)
+
+        page.click("#quitBtn")
+        expect(page.locator(".quit-screen")).to_be_visible()
+        srv.proc.wait(10)
+        check(P + "Quit button shuts the server down", srv.proc.returncode == 0)
+        page.screenshot(path=os.path.join(SHOTS, "Mac-4-quit.png"))
+        check(P + "no JavaScript errors", not errors, errors[:3])
+    except Exception as exc:
+        check(P + "UNEXPECTED: " + type(exc).__name__ + ": " + str(exc)[:300], False)
+        try: page.screenshot(path=os.path.join(SHOTS, "Mac-error.png"))
+        except Exception: pass
+    finally:
+        browser.close(); srv.close(); httpd.shutdown(); shutil.rmtree(tools, ignore_errors=True)
 
 
 with sync_playwright() as pw:
     dev = pw.devices
-    run_device(pw, "iPhone13", dict(dev["iPhone 13"]))
-    run_device(pw, "Pixel7", dict(dev["Pixel 7"]))
-    run_device(pw, "Desktop", dict(viewport={"width": 1280, "height": 800}))
-    run_device(pw, "iPhoneDark", dict(dev["iPhone 13"], color_scheme="dark"))
+    for impl in IMPLS:
+        run_device(pw, "iPhone13", dict(dev["iPhone 13"]), impl)
+        run_device(pw, "Pixel7", dict(dev["Pixel 7"]), impl)
+        run_device(pw, "Desktop", dict(viewport={"width": 1280, "height": 800}), impl)
+        run_device(pw, "iPhoneDark", dict(dev["iPhone 13"], color_scheme="dark"), impl)
+    if "go" in IMPLS:
+        run_go_computer_ui(pw)
 
 bad = [n for n, ok in results if not ok]
 print("\n%d checks, %d failed" % (len(results), len(bad)))

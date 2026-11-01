@@ -1,14 +1,15 @@
 #!/bin/sh
-# Builds everything in dist/:  YouTubeDownloader-Setup.exe, YouTubeDownloader.apk, YouTubeDownloader-PhoneServer.zip
+# Builds everything in dist/:  YouTubeDownloader-Setup.exe, YouTubeDownloader.apk, YouTubeDownloader-macOS.zip, YouTubeDownloader-PhoneServer.zip
 set -e
 cd "$(dirname "$0")"
 sh installer/build.sh
 sh mobile/android/build-apk.sh
+sh mobile/macos/build-app.sh
 python3 - <<'PY'
 import os, zipfile
 files = ["PhoneServer.ps1", "Start Phone Server.bat", "YouTubeMP3.ps1", "README.md",
          "mobile/server/ytdl_server.py", "mobile/android/termux-setup.sh",
-         "docs/WINDOWS.md", "docs/ANDROID.md", "docs/IOS.md"]
+         "docs/WINDOWS.md", "docs/ANDROID.md", "docs/IOS.md", "docs/MACOS.md"]
 files += ["mobile/server/web/" + f for f in sorted(os.listdir("mobile/server/web"))]
 files = [f for f in files if os.path.exists(f)]
 with zipfile.ZipFile("dist/YouTubeDownloader-PhoneServer.zip", "w", zipfile.ZIP_DEFLATED) as z:
