@@ -83,3 +83,10 @@ input[type=number].num{width:84px;text-align:center}select.unit{width:auto;min-w
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + var(--safe-b));background:#111827;color:#fff;
   padding:10px 16px;border-radius:12px;font-size:14px;z-index:30;max-width:90vw;text-align:center;box-shadow:0 4px 14px rgba(0,0,0,.3)}
 @media (min-width:760px){ .tabs{max-width:720px;left:50%;transform:translateX(-50%);border-radius:16px 16px 0 0;border:1px solid var(--line)} }
+
+.banner{background:var(--accent-soft);color:var(--ink);padding:10px 16px;border-bottom:1px solid var(--line)}
+.banner-text{font-size:14px;font-weight:600;margin-bottom:6px}
+.banner .btn{min-height:40px;margin-top:8px}
+.banner .prog{margin-top:0}
+.hint.ok{color:var(--ok)}
+.quit-screen{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;padding:24px;z-index:40}

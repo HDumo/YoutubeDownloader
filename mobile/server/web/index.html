@@ -24,6 +24,12 @@
   </div>
 </header>
 
+<div id="setupBar" class="banner" hidden>
+  <div id="setupText" class="banner-text">Getting ready...</div>
+  <div class="prog"><i id="setupProg" style="width:0%"></i></div>
+  <button id="setupBtn" class="btn" hidden>Try again</button>
+</div>
+
 <main id="app" hidden>
   <section data-tab="add" class="card-stack">
     <div class="card">
@@ -98,6 +104,21 @@
       <input id="pUntil" type="datetime-local">
       <button id="pauseUntil" class="btn block">Pause until then</button>
       <p class="hint">A download that is already running finishes first.</p>
+    </div>
+
+    <div class="card" id="computerCard" hidden>
+      <h2>This computer</h2>
+      <label class="check"><input type="checkbox" id="lanToggle"> <span>Let phones and tablets on my Wi-Fi use this</span></label>
+      <div id="lanInfo" class="hint" hidden></div>
+      <label class="check" id="autoRow"><input type="checkbox" id="autoToggle"> <span>Start when I log in (runs quietly in the background)</span></label>
+      <label for="folderInput">Save downloads in</label>
+      <input id="folderInput" type="text" autocomplete="off" spellcheck="false" placeholder="/Users/you/Downloads/YouTubeDownloader">
+      <div class="row gap">
+        <button id="folderSave" class="btn" style="flex:1">Use this folder</button>
+        <button id="folderChoose" class="btn" style="flex:1" hidden>Choose...</button>
+      </div>
+      <p class="kv"><span>PIN (for phones)</span><b id="pinShow">-</b></p>
+      <button id="quitBtn" class="btn block">Quit YouTube Downloader</button>
     </div>
 
     <div class="card">
