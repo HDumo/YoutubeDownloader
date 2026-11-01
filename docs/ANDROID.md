@@ -6,7 +6,8 @@ You have three ways to use it. **Option A** is the easiest if you have a Windows
 |---|---|---|---|
 | **A** | Your Windows PC | on the PC (copy to the phone with *Save*) | the Windows installer + APK |
 | **B** | The phone itself, using Termux | in the phone's *Downloads/YouTubeDownloader* | the free Termux app |
-| **C** | Another computer (Mac / Linux / Raspberry Pi / NAS) | on that computer | Python 3, yt-dlp, ffmpeg |
+| **C** | Another computer (Linux / Raspberry Pi / NAS) | on that computer | Python 3, yt-dlp, ffmpeg |
+| **D** | Your **Mac** (the Mac app) | on the Mac | the [Mac app](MACOS.md) |
 
 ## Install the Android app (APK)
 
@@ -43,13 +44,17 @@ You can also skip the APK and open the same address in Chrome, then menu -> **Ad
 ## Option C - any other computer as the server
 
 Download **[YouTubeDownloader-PhoneServer.zip](https://github.com/HDumo/YoutubeDownloader/raw/main/dist/YouTubeDownloader-PhoneServer.zip)**,
-install Python 3, `yt-dlp` and `ffmpeg` (for example `sudo apt install python3 ffmpeg yt-dlp` or `brew install yt-dlp ffmpeg`), then:
+install Python 3, `yt-dlp` and `ffmpeg` (for example `sudo apt install python3 ffmpeg yt-dlp`), then:
 
 ```
 python3 mobile/server/ytdl_server.py --out ~/Downloads/YouTubeDownloader
 ```
 
 It prints the address and PIN. Options: `--port 8765`, `--bind 127.0.0.1` (this device only), `--pin 123456`, `--yt-dlp /path/to/yt-dlp`.
+
+## Option D - your Mac as the server
+
+Install the [Mac app](MACOS.md), then **Settings -> This computer -> Let phones and tablets on my Wi-Fi use this**. Type the address it shows into the Android app (or Chrome) and enter the PIN - exactly like Option A.
 
 ## Using the app
 
