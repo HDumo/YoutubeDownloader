@@ -91,9 +91,45 @@
   }
 
   // ---------------------------------------------------------------- render
+  function renderSetup(s) {
+    var st = s.setup, bar = $('#setupBar');
+    if (!st || !st.supported || st.state === 'ready' || st.state === 'unsupported') { bar.hidden = true; return; }
+    bar.hidden = false;
+    var btn = $('#setupBtn');
+    if (st.state === 'running') {
+      $('#setupText').textContent = 'Getting ready (one time only): ' + st.text + ' ' + Math.round(st.percent || 0) + '%';
+      $('#setupProg').style.width = Math.max(2, st.percent || 0) + '%'; btn.hidden = true;
+    } else if (st.state === 'error') {
+      $('#setupText').textContent = 'Setup could not finish: ' + st.error + ' (check your internet connection)';
+      $('#setupProg').style.width = '0%'; btn.hidden = false; btn.textContent = 'Try again';
+    } else {
+      $('#setupText').textContent = 'The helper programs (yt-dlp and ffmpeg) are not installed yet.';
+      $('#setupProg').style.width = '0%'; btn.hidden = false; btn.textContent = 'Download them now';
+    }
+  }
+
+  // The "This computer" card: only on the computer that runs the downloader, and only when the server supports it.
+  function renderComputer(s) {
+    var f = s.features, card = $('#computerCard');
+    if (!f || !s.is_local) { card.hidden = true; return; }
+    card.hidden = false;
+    $('#lanToggle').checked = !!s.lan;
+    var info = $('#lanInfo');
+    info.hidden = !s.lan;
+    info.textContent = s.lan ? ((s.lan_urls && s.lan_urls.length ? 'On your phone open: ' + s.lan_urls.join('  or  ') : 'Connected to Wi-Fi?') + '  -  then enter the PIN below.') : '';
+    $('#autoRow').hidden = !f.autostart;
+    $('#autoToggle').checked = !!s.autostart;
+    $('#folderChoose').hidden = !f.chooser;
+    var fi = $('#folderInput');
+    if (document.activeElement !== fi && fi.dataset.server !== s.out_dir) { fi.value = s.out_dir; fi.dataset.server = s.out_dir; }
+    $('#pinShow').textContent = s.pin || '-';
+    $('#quitBtn').hidden = !f.quit;
+  }
+
   function render() {
     var s = state;
-    $('#pill').textContent = pillText(s);
+    renderSetup(s); renderComputer(s);
+    $('#pill').textContent = (s.setup && s.setup.state === 'running') ? 'Getting ready (one time)...' : pillText(s);
     $('#outDir').textContent = s.out_dir;
     $('#infoOut').textContent = s.out_dir;
     $('#infoYt').textContent = s.ytdlp || 'not found';
@@ -266,6 +302,31 @@
       var t = new Date($('#pUntil').value).getTime();
       if (!t) { toast('Pick a date and time first.'); return; }
       wrap(api('/api/pause', { mode: 'until', until: t / 1000 }), 'Paused');
+    });
+    $('#setupBtn').addEventListener('click', function () { wrap(api('/api/setup', {})); });
+    $('#lanToggle').addEventListener('change', function () {
+      var on = $('#lanToggle').checked;
+      wrap(api('/api/lan', { enabled: on }), on ? 'Phones on your Wi-Fi can now connect' : 'Wi-Fi access is off');
+    });
+    $('#autoToggle').addEventListener('change', function () {
+      var on = $('#autoToggle').checked;
+      wrap(api('/api/autostart', { enabled: on }), on ? 'Will start when you log in' : 'Will not start at login');
+    });
+    $('#folderSave').addEventListener('click', function () {
+      wrap(api('/api/folder', { path: $('#folderInput').value }), 'Folder saved');
+    });
+    $('#folderChoose').addEventListener('click', function () {
+      wrap(api('/api/choose-folder', {}), 'Folder saved');
+    });
+    $('#quitBtn').addEventListener('click', function () {
+      if (!confirm('Quit YouTube Downloader? Downloads will stop until you open it again.')) return;
+      api('/api/quit', {}).then(function () {
+        stopPolling();
+        var d = el('div', 'quit-screen');
+        d.appendChild(el('h2', null, 'YouTube Downloader has quit'));
+        d.appendChild(el('p', 'hint', 'Open the app again from your Applications folder when you need it. You can close this tab.'));
+        document.body.appendChild(d);
+      }).catch(function (e) { toast(e.message); });
     });
     $('#updateYt').addEventListener('click', function () {
       var out = $('#updateOut'); out.hidden = false; out.textContent = 'Updating...';

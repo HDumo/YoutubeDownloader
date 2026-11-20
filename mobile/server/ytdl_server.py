@@ -30,7 +30,7 @@ import threading
 import time
 import urllib.parse
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 UNIT_ORDER = ["days", "hours", "minutes", "seconds"]
 UNIT_SECONDS = {"days": 86400, "hours": 3600, "minutes": 60, "seconds": 1}
@@ -304,6 +304,10 @@ class Manager:
             changed = True
         if changed:
             self._write_json(path, cfg)
+            try:
+                os.chmod(path, 0o600)          # the PIN lives here: only this user may read it
+            except OSError:
+                pass
         return cfg
 
     @property

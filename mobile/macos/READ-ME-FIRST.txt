@@ -1,0 +1,29 @@
+YouTube Downloader for Mac
+==========================
+
+1. Drag "YouTube Downloader.app" into your Applications folder.
+
+2. Open it.  macOS will say it "cannot be opened because Apple cannot check it for malicious software"
+   (this app is not signed with a paid Apple developer certificate).  Do ONE of these:
+
+   macOS 15 (Sequoia) and newer:
+     Click "Done", then open  System Settings > Privacy & Security, scroll down, click "Open Anyway"
+     next to YouTube Downloader, and confirm with your password / Touch ID.
+
+   macOS 14 and older:
+     Control-click (right-click) the app > Open > Open.
+
+   Or, in Terminal (works on every version):
+     xattr -cr "/Applications/YouTube Downloader.app"
+
+3. The first start downloads two free helpers (yt-dlp and ffmpeg, about 100 MB). A banner shows the progress.
+   Then your browser opens the app. A download-arrow icon appears in the menu bar (top right).
+
+Using it
+  - Paste YouTube links, tick MP3 and/or MP4, click "Add to queue".
+  - Closing the browser tab does NOT stop downloads. Menu bar icon > Quit to stop everything.
+  - Settings tab: limit downloads, pause, choose the save folder, "Start when I log in",
+    and "Let phones and tablets on my Wi-Fi use this" (shows an address and PIN for your iPhone / Android).
+
+Only download audio and video you have the right to.
+Full guide: docs/MACOS.md in the project (https://github.com/HDumo/YoutubeDownloader).

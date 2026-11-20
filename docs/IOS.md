@@ -7,7 +7,7 @@ or Raspberry Pi) on the same Wi-Fi. It behaves like an app once added to the Hom
 ## Set up (2 minutes)
 
 1. On the PC: install the [Windows app](WINDOWS.md) and click **Phone / tablet access**. Note the **address** (like `http://192.168.1.20:8765`) and the **PIN**.
-   *(No PC? Run the server on an Android phone with Termux - see [ANDROID.md](ANDROID.md) - or on a Mac/Linux/Raspberry Pi.)*
+   *(Using a Mac? Install the [Mac app](MACOS.md) and turn on **Settings -> This computer -> Let phones and tablets on my Wi-Fi use this** - it shows the address and PIN. No PC? Run the server on an Android phone with Termux - see [ANDROID.md](ANDROID.md) - or on a Linux box or Raspberry Pi.)*
 2. On the iPhone: join the **same Wi-Fi**, open **Safari**, and go to that address.
 3. Enter the **PIN**. Safari remembers it.
 4. **Add to Home Screen**: tap the Share button -> **Add to Home Screen** -> **Add**. Open it from the new *YT Downloader* icon (full screen, no Safari bars).
